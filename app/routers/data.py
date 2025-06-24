@@ -1,15 +1,9 @@
+import json
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from app.db import get_latest_data
-<<<<<<< HEAD
+class PrettyJSONResponse(JSONResponse):
+ def render(self,content):return json.dumps(content,ensure_ascii=False,allow_nan=False,indent=2,separators=(",",": ")).encode("utf-8")
 router=APIRouter()
-@router.get("/data/latest")
+@router.get("/data/latest",response_class=PrettyJSONResponse)
 async def latest_data():return await get_latest_data()
-=======
-
-router = APIRouter()
-
-@router.get("/data/latest")
-async def latest_data():
-    data = await get_latest_data()
-    return data
->>>>>>> c0f02561b62130cdb8e6492ea11157bf7aa103f9

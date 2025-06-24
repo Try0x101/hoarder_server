@@ -15,8 +15,4 @@ python-socketio
 msgpack
 httpx
 pydantic
-<<<<<<< HEAD
 python-multipart
-=======
-python-multipart
->>>>>>> c0f02561b62130cdb8e6492ea11157bf7aa103f9
