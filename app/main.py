@@ -18,8 +18,7 @@ active_connections={}
 async def root_endpoints(request:Request):
  return{"server":"hoarder_server IoT Telemetry API","status":"active","version":"1.0.0","timestamp":datetime.datetime.now().isoformat(),"endpoints":{"GET /":"This endpoint - API documentation","GET /data/latest":"Get latest data from all devices","GET /data/history":"Get historical data with time filtering","GET /data/gaps":"Get analysis of data gaps","GET /data/summary":"Get statistical summary of device data","POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)","POST /api/batch":"Submit batch telemetry data","GET /dashboard/":"Web dashboard interface","GET /static/*":"Static files","WS /socket.io/":"Real-time updates via Socket.IO","GET /export/database":"Export database to JSON","POST /import/database":"Import database from JSON"},"urls":{"data_latest":"http://188.132.234.72:5000/data/latest","data_history":"http://188.132.234.72:5000/data/history","telemetry":"http://188.132.234.72:5000/api/telemetry","batch":"http://188.132.234.72:5000/api/batch","dashboard":"http://188.132.234.72:5000/dashboard/","websocket":"ws://188.132.234.72:5000/socket.io/"},"database":{"tables":["device_data","latest_device_states","timestamped_data"],"status":"connected","config":{"host":"localhost","database":"database","user":"admin"}},"features":["Real-time telemetry collection","Weather data enrichment with Open-Meteo API","GPS location tracking with timezone detection","Socket.IO time updates","PostgreSQL storage with JSONB","Compressed data support (gzip/deflate)","Device movement tracking","Weather caching optimization","Marine weather data","Historical data streaming with delta detection","Gap analysis","Activity statistics","Database export/import"]}
 @sio.event
-async def connect(sid,environ):
- print(f"[{datetime.datetime.now()}] Socket.IO client connected: {sid}")
+async def connect(sid,environ):print(f"[{datetime.datetime.now()}] Socket.IO client connected: {sid}")
 @sio.event
 async def disconnect(sid):
  print(f"[{datetime.datetime.now()}] Socket.IO client disconnected: {sid}")
@@ -60,14 +59,11 @@ async def send_time_updates(sid,device_id):
        location_timezone_str=f"UTC{sign}{abs(hours)}"if minutes==0 else f"UTC{sign}{abs(hours)}:{abs(minutes):02d}"
        location_date_str=now_local.strftime("%d.%m.%Y")
        location_time_str=now_local.strftime("%H:%M:%S")
-     except Exception as e:
-      print(f"[{datetime.datetime.now()}] Error calculating timezone for device {device_id}: {e}")
+     except Exception as e:print(f"[{datetime.datetime.now()}] Error calculating timezone for device {device_id}: {e}")
    await sio.emit("time_update",{"device_id":device_id,"location_date":location_date_str,"location_time":location_time_str,"location_timezone":location_timezone_str},room=sid)
    await asyncio.sleep(1)
- except asyncio.CancelledError:
-  print(f"[{datetime.datetime.now()}] Time update task cancelled for device {device_id}")
- except Exception as e:
-  print(f"[{datetime.datetime.now()}] Error in time update task for device {device_id}: {e}")
+ except asyncio.CancelledError:print(f"[{datetime.datetime.now()}] Time update task cancelled for device {device_id}")
+ except Exception as e:print(f"[{datetime.datetime.now()}] Error in time update task for device {device_id}: {e}")
 @app.on_event("startup")
 async def startup():
  print(f"[{datetime.datetime.now()}] Starting hoarder_server...")
