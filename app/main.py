@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse
 from fastapi import Request
 from app.db import init_db,get_latest_data
-from app.routers import data,dashboard,telemetry
+from app.routers import data,dashboard,telemetry,history,batch,export_import
 from timezonefinder import TimezoneFinder
 class PrettyJSONResponse(JSONResponse):
  def render(self,content):return json.dumps(content,ensure_ascii=False,allow_nan=False,indent=2,separators=(",",": ")).encode("utf-8")
@@ -16,17 +16,20 @@ tf_sio=TimezoneFinder()
 active_connections={}
 @app.get("/")
 async def root_endpoints(request:Request):
- return{"server":"hoarder_server IoT Telemetry API","status":"active","version":"1.0.0","timestamp":datetime.datetime.now().isoformat(),"endpoints":{"GET /":"This endpoint - API documentation","GET /data/latest":"Get latest data from all devices","POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)","GET /dashboard/":"Web dashboard interface","GET /static/*":"Static files","WS /socket.io/":"Real-time updates via Socket.IO"},"urls":{"data_latest":"http://188.132.234.72:5000/data/latest","telemetry":"http://188.132.234.72:5000/api/telemetry","dashboard":"http://188.132.234.72:5000/dashboard/","websocket":"ws://188.132.234.72:5000/socket.io/"},"database":{"tables":["device_data","latest_device_states"],"status":"connected","config":{"host":"localhost","database":"database","user":"admin"}},"features":["Real-time telemetry collection","Weather data enrichment with Open-Meteo API","GPS location tracking with timezone detection","Socket.IO time updates","PostgreSQL storage with JSONB","Compressed data support (gzip/deflate)","Device movement tracking","Weather caching optimization","Marine weather data"],"weather_api":{"primary":"https://api.open-meteo.com/v1/forecast","marine":"https://marine-api.open-meteo.com/v1/marine","fallback":"https://wttr.in","daily_limit":9000,"cache_duration":"1 hour","distance_threshold":"1.0 km"},"server_info":{"host":"0.0.0.0","port":5000,"workers":1,"framework":"FastAPI + Socket.IO","python":"3.10+","database":"PostgreSQL"}}
+ return{"server":"hoarder_server IoT Telemetry API","status":"active","version":"1.0.0","timestamp":datetime.datetime.now().isoformat(),"endpoints":{"GET /":"This endpoint - API documentation","GET /data/latest":"Get latest data from all devices","GET /data/history":"Get historical data with time filtering","GET /data/gaps":"Get analysis of data gaps","GET /data/summary":"Get statistical summary of device data","POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)","POST /api/batch":"Submit batch telemetry data","GET /dashboard/":"Web dashboard interface","GET /static/*":"Static files","WS /socket.io/":"Real-time updates via Socket.IO","GET /export/database":"Export database to JSON","POST /import/database":"Import database from JSON"},"urls":{"data_latest":"http://188.132.234.72:5000/data/latest","data_history":"http://188.132.234.72:5000/data/history","telemetry":"http://188.132.234.72:5000/api/telemetry","batch":"http://188.132.234.72:5000/api/batch","dashboard":"http://188.132.234.72:5000/dashboard/","websocket":"ws://188.132.234.72:5000/socket.io/"},"database":{"tables":["device_data","latest_device_states","timestamped_data"],"status":"connected","config":{"host":"localhost","database":"database","user":"admin"}},"features":["Real-time telemetry collection","Weather data enrichment with Open-Meteo API","GPS location tracking with timezone detection","Socket.IO time updates","PostgreSQL storage with JSONB","Compressed data support (gzip/deflate)","Device movement tracking","Weather caching optimization","Marine weather data","Historical data streaming with delta detection","Gap analysis","Activity statistics","Database export/import"]}
 @sio.event
-async def connect(sid,environ):pass
+async def connect(sid,environ):
+ print(f"[{datetime.datetime.now()}] Socket.IO client connected: {sid}")
 @sio.event
 async def disconnect(sid):
+ print(f"[{datetime.datetime.now()}] Socket.IO client disconnected: {sid}")
  if sid in active_connections:
   task=active_connections[sid]['task']
   if not task.done():task.cancel()
   del active_connections[sid]
 @sio.on("register_device")
 async def register_device(sid,device_id):
+ print(f"[{datetime.datetime.now()}] Device {device_id} registered for time updates on {sid}")
  if sid in active_connections:
   task=active_connections[sid]['task']
   if not task.done():task.cancel()
@@ -57,14 +60,31 @@ async def send_time_updates(sid,device_id):
        location_timezone_str=f"UTC{sign}{abs(hours)}"if minutes==0 else f"UTC{sign}{abs(hours)}:{abs(minutes):02d}"
        location_date_str=now_local.strftime("%d.%m.%Y")
        location_time_str=now_local.strftime("%H:%M:%S")
-     except:pass
+     except Exception as e:
+      print(f"[{datetime.datetime.now()}] Error calculating timezone for device {device_id}: {e}")
    await sio.emit("time_update",{"device_id":device_id,"location_date":location_date_str,"location_time":location_time_str,"location_timezone":location_timezone_str},room=sid)
    await asyncio.sleep(1)
- except asyncio.CancelledError:pass
- except:pass
+ except asyncio.CancelledError:
+  print(f"[{datetime.datetime.now()}] Time update task cancelled for device {device_id}")
+ except Exception as e:
+  print(f"[{datetime.datetime.now()}] Error in time update task for device {device_id}: {e}")
 @app.on_event("startup")
-async def startup():await init_db()
+async def startup():
+ print(f"[{datetime.datetime.now()}] Starting hoarder_server...")
+ await init_db()
+ print(f"[{datetime.datetime.now()}] Database initialized successfully")
+ print(f"[{datetime.datetime.now()}] Server ready at http://188.132.234.72:5000")
+@app.on_event("shutdown")
+async def shutdown():
+ print(f"[{datetime.datetime.now()}] Shutting down hoarder_server...")
+ for sid,connection in active_connections.items():
+  task=connection['task']
+  if not task.done():task.cancel()
+ active_connections.clear()
 app.mount("/static",StaticFiles(directory="app/static"),name="static")
 app.include_router(data.router)
 app.include_router(dashboard.router,prefix="/dashboard")
 app.include_router(telemetry.router)
+app.include_router(history.router)
+app.include_router(batch.router)
+app.include_router(export_import.router)
