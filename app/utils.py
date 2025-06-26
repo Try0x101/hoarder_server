@@ -1,4 +1,3 @@
-# app/utils.py
 import zlib,gzip,json,io,datetime,httpx,asyncio
 from typing import Optional,Dict,Any,Tuple
 import hashlib,os,math
@@ -133,7 +132,7 @@ def save_weather_to_cache(lat:float,lon:float,data:Dict[str,Any]):
   cache_data=data.copy()
   cache_data['_cache_lat']=lat
   cache_data['_cache_lon']=lon
-  cache_data['_cache_time']=datetime.datetime.now().isoformat()
+  cache_data['_cache_time']=datetime.datetime.now(datetime.timezone.utc).isoformat()
   with open(cache_file,'w') as f:json.dump(cache_data,f)
   print(f"[{datetime.datetime.now()}] DEBUG: Weather data cached for coordinates {lat}, {lon}")
  except Exception as e:print(f"[{datetime.datetime.now()}] DEBUG: Cache write error: {e}")
@@ -253,7 +252,7 @@ async def enrich_with_weather_data(data:dict)->dict:
 def get_location_time_info(lat,lon):
  try:
   timezone_str=tf.timezone_at(lat=lat,lng=lon)
-  if not timezone_str:return None,None,None
+  if not timezone_str:return None,None,None,None
   tz=pytz.timezone(timezone_str)
   current_time=datetime.datetime.now(tz)
   location_date=current_time.strftime("%d.%m.%Y")
@@ -264,10 +263,10 @@ def get_location_time_info(lat,lon):
   minutes=abs(total_seconds%3600)//60
   if minutes==0:location_timezone=f"UTC{'+' if hours>=0 else ''}{hours}"
   else:location_timezone=f"UTC{'+' if hours>=0 else ''}{hours}:{minutes:02d}"
-  return location_date,location_time,location_timezone
+  return location_date,location_time,location_timezone,tz
  except Exception as e:
   print(f"Error getting location time info: {e}")
-  return None,None,None
+  return None,None,None,None
 
 async def decode_raw_data(raw:bytes)->dict:
  try:
@@ -309,15 +308,16 @@ def transform_device_data(received_data):
  location_date=None
  location_time=None
  location_timezone=None
+ location_tz=None
  lat=received_data.get('lat')
  lon=received_data.get('lon')
  if lat is not None and lon is not None:
   try:
    lat_float=safe_float(lat)
    lon_float=safe_float(lon)
-   if lat_float is not None and lon_float is not None:location_date,location_time,location_timezone=get_location_time_info(lat_float,lon_float)
+   if lat_float is not None and lon_float is not None:location_date,location_time,location_timezone,location_tz=get_location_time_info(lat_float,lon_float)
   except Exception as e:print(f"Error processing coordinates: lat={lat}, lon={lon}, error={e}")
-  
+
  wind_direction_compass=""
  if 'wind_direction_10m' in received_data and received_data.get('wind_direction_10m') is not None:
   direction=int(float(received_data.get('wind_direction_10m')))
@@ -329,10 +329,10 @@ def transform_device_data(received_data):
   elif 202.5<=direction<247.5:wind_direction_compass="SW"
   elif 247.5<=direction<292.5:wind_direction_compass="W"
   elif 292.5<=direction<337.5:wind_direction_compass="NW"
-  
+
  weather_observation_formatted=None
  weather_observation_time=received_data.get('weather_observation_time')
- 
+
  if weather_observation_time:
   try:
    obs_time=None
@@ -354,25 +354,21 @@ def transform_device_data(received_data):
       obs_time=datetime.datetime.strptime(obs_str,'%H:%M')
       obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
      except:pass
-   
+
    if obs_time:
-    if location_timezone and location_timezone.startswith('UTC'):
-     offset_str=location_timezone[3:]
-     if offset_str:
-      offset_hours=int(offset_str.split(':')[0])
-      if location_timezone.startswith('UTC-'):offset_hours=-abs(offset_hours)
-      obs_time_local=obs_time+datetime.timedelta(hours=offset_hours)
-     else:obs_time_local=obs_time
+    if location_tz:
+     if obs_time.tzinfo is None:obs_time=obs_time.replace(tzinfo=pytz.utc)
+     obs_time_local=obs_time.astimezone(location_tz)
      weather_observation_formatted=f"{obs_time_local.strftime('%d.%m.%Y %H:%M')} {location_timezone}"
-    else:weather_observation_formatted=f"{obs_time.strftime('%d.%m.%Y %H:%M')} UTC"
+    else:
+     if obs_time.tzinfo is None:obs_time=obs_time.replace(tzinfo=pytz.utc)
+     weather_observation_formatted=f"{obs_time.strftime('%d.%m.%Y %H:%M')} UTC"
    else:weather_observation_formatted=f"{weather_observation_time} (local time)"
   except Exception as e:
    print(f"Error formatting weather observation time: {e}")
    weather_observation_formatted=f"{weather_observation_time} (format error)"
 
- weather_last_fetched=None
  weather_fetch_formatted=None
- 
  device_id=received_data.get('id') or received_data.get('device_id')
  if device_id:
   try:
@@ -380,29 +376,30 @@ def transform_device_data(received_data):
    positions=load_device_positions()
    device_key=str(device_id)
    if device_key in positions and 'last_weather_update' in positions[device_key]:
-    weather_last_fetched=positions[device_key]['last_weather_update']
-    
+    weather_last_fetched_iso=positions[device_key]['last_weather_update']
+    weather_time_utc=None
     try:
-     weather_time=datetime.datetime.fromisoformat(weather_last_fetched)
-     if location_timezone and location_timezone.startswith('UTC'):
-      offset_str=location_timezone[3:]
-      if offset_str:
-       offset_hours=int(offset_str.split(':')[0])
-       if location_timezone.startswith('UTC-'):offset_hours=-abs(offset_hours)
-       weather_time_local=weather_time+datetime.timedelta(hours=offset_hours)
-      else:weather_time_local=weather_time
-      weather_fetch_formatted=weather_time_local.strftime("%d.%m.%Y %H:%M:%S")
+     weather_time_utc=datetime.datetime.fromisoformat(weather_last_fetched_iso)
+    except ValueError:
+     try:
+      weather_time_utc=datetime.datetime.strptime(weather_last_fetched_iso,'%d.%m.%Y %H:%M:%S')
+     except Exception as strptime_err:
+      print(f"Could not parse weather fetch timestamp '{weather_last_fetched_iso}': {strptime_err}")
+      weather_fetch_formatted=weather_last_fetched_iso
+    if weather_time_utc:
+     if weather_time_utc.tzinfo is None:
+      weather_time_utc=pytz.utc.localize(weather_time_utc)
+     if location_tz:
+      weather_time_local=weather_time_utc.astimezone(location_tz)
+      weather_fetch_formatted=f"{weather_time_local.strftime('%d.%m.%Y %H:%M:%S')} {location_timezone}"
      else:
-      weather_fetch_formatted=weather_time.strftime("%d.%m.%Y %H:%M:%S")
-    except Exception as e:
-     print(f"Error formatting weather fetch time: {e}")
-     weather_fetch_formatted=weather_last_fetched
+      weather_fetch_formatted=f"{weather_time_utc.strftime('%d.%m.%Y %H:%M:%S')} UTC"
   except Exception as e:
    print(f"Error getting weather fetch time from device tracker: {e}")
-  
+
  if not weather_fetch_formatted:
-  weather_fetch_formatted=datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-  
+  weather_fetch_formatted=datetime.datetime.now(datetime.timezone.utc).strftime("%d.%m.%Y %H:%M:%S")+" UTC"
+
  return{
   'device_id':received_data.get('id'),
   'device_name':received_data.get('n'),

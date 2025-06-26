@@ -26,38 +26,39 @@ def save_device_positions(positions:Dict[str,Dict]):
 def should_force_weather_update(device_id:str,current_lat:float,current_lon:float)->Tuple[bool,str]:
  positions=load_device_positions()
  device_key=str(device_id)
+ now_utc=datetime.datetime.now(datetime.timezone.utc)
  if device_key not in positions:
   print(f"[{datetime.datetime.now()}] DEBUG: Device {device_id} - first weather request")
-  positions[device_key]={'lat':current_lat,'lon':current_lon,'last_weather_update':datetime.datetime.now().isoformat(),'weather_update_count':1}
+  positions[device_key]={'lat':current_lat,'lon':current_lon,'last_weather_update':now_utc.isoformat(),'weather_update_count':1}
   save_device_positions(positions)
   return True,"first_request"
  last_position=positions[device_key]
  last_lat=last_position.get('lat')
  last_lon=last_position.get('lon')
- last_update=last_position.get('last_weather_update')
+ last_update_iso=last_position.get('last_weather_update')
  if last_lat is None or last_lon is None:
   print(f"[{datetime.datetime.now()}] DEBUG: Device {device_id} - invalid last position")
-  positions[device_key].update({'lat':current_lat,'lon':current_lon,'last_weather_update':datetime.datetime.now().isoformat(),'weather_update_count':positions[device_key].get('weather_update_count',0)+1})
+  positions[device_key].update({'lat':current_lat,'lon':current_lon,'last_weather_update':now_utc.isoformat(),'weather_update_count':positions[device_key].get('weather_update_count',0)+1})
   save_device_positions(positions)
   return True,"invalid_last_position"
  distance=calculate_distance_km(current_lat,current_lon,last_lat,last_lon)
  print(f"[{datetime.datetime.now()}] DEBUG: Device {device_id} - distance from last weather update: {distance:.2f}km")
  if distance>=MOVEMENT_THRESHOLD_KM:
   print(f"[{datetime.datetime.now()}] DEBUG: Device {device_id} - significant movement detected ({distance:.2f}km)")
-  positions[device_key].update({'lat':current_lat,'lon':current_lon,'last_weather_update':datetime.datetime.now().isoformat(),'weather_update_count':positions[device_key].get('weather_update_count',0)+1})
+  positions[device_key].update({'lat':current_lat,'lon':current_lon,'last_weather_update':now_utc.isoformat(),'weather_update_count':positions[device_key].get('weather_update_count',0)+1})
   save_device_positions(positions)
   return True,f"moved_{distance:.2f}km"
- if last_update:
+ if last_update_iso:
   try:
-   last_update_time=datetime.datetime.fromisoformat(last_update)
-   time_since_update=datetime.datetime.now()-last_update_time
+   last_update_time=datetime.datetime.fromisoformat(last_update_iso)
+   time_since_update=now_utc-last_update_time
    if time_since_update.total_seconds()>3600:
     print(f"[{datetime.datetime.now()}] DEBUG: Device {device_id} - weather data expired ({time_since_update})")
-    positions[device_key].update({'lat':current_lat,'lon':current_lon,'last_weather_update':datetime.datetime.now().isoformat(),'weather_update_count':positions[device_key].get('weather_update_count',0)+1})
+    positions[device_key].update({'lat':current_lat,'lon':current_lon,'last_weather_update':now_utc.isoformat(),'weather_update_count':positions[device_key].get('weather_update_count',0)+1})
     save_device_positions(positions)
     return True,f"expired_{int(time_since_update.total_seconds())}s"
   except Exception as e:print(f"[{datetime.datetime.now()}] DEBUG: Error parsing last update time: {e}")
- positions[device_key].update({'current_lat':current_lat,'current_lon':current_lon,'last_seen':datetime.datetime.now().isoformat()})
+ positions[device_key].update({'current_lat':current_lat,'current_lon':current_lon,'last_seen':now_utc.isoformat()})
  save_device_positions(positions)
  print(f"[{datetime.datetime.now()}] DEBUG: Device {device_id} - using cached weather (distance: {distance:.2f}km)")
  return False,f"cached_distance_{distance:.2f}km"
@@ -78,13 +79,14 @@ def get_device_stats()->Dict[str,any]:
 def cleanup_old_device_data(days_threshold:int=7):
  try:
   positions=load_device_positions()
-  cutoff_time=datetime.datetime.now()-datetime.timedelta(days=days_threshold)
+  cutoff_time=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=days_threshold)
   devices_to_remove=[]
   for device_id,position in positions.items():
    last_seen=position.get('last_seen') or position.get('last_weather_update')
    if last_seen:
     try:
      last_seen_time=datetime.datetime.fromisoformat(last_seen)
+     if last_seen_time.tzinfo is None:last_seen_time=last_seen_time.replace(tzinfo=datetime.timezone.utc)
      if last_seen_time<cutoff_time:devices_to_remove.append(device_id)
     except:devices_to_remove.append(device_id)
    else:devices_to_remove.append(device_id)
