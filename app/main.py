@@ -1,24 +1,27 @@
+# app/main.py
 import fastapi,socketio,datetime,pytz,asyncio,json
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse
 from fastapi import Request
+from app.responses import PrettyJSONResponse
 from app.db import init_db,get_latest_data
 from app.routers import data,dashboard,telemetry,history,batch,export_import
 from timezonefinder import TimezoneFinder
-class PrettyJSONResponse(JSONResponse):
- def render(self,content):return json.dumps(content,ensure_ascii=False,allow_nan=False,indent=2,separators=(",",": ")).encode("utf-8")
+
 app=fastapi.FastAPI(default_response_class=PrettyJSONResponse)
 templates=Jinja2Templates(directory="app/templates")
 sio=socketio.AsyncServer(async_mode="asgi",cors_allowed_origins="*")
 socket_app=socketio.ASGIApp(sio,other_asgi_app=app)
 tf_sio=TimezoneFinder()
 active_connections={}
+
 @app.get("/")
 async def root_endpoints(request:Request):
  return{"server":"hoarder_server IoT Telemetry API","status":"active","version":"1.0.0","timestamp":datetime.datetime.now().isoformat(),"endpoints":{"GET /":"This endpoint - API documentation","GET /data/latest":"Get latest data from all devices","GET /data/history":"Get historical data with time filtering","GET /data/gaps":"Get analysis of data gaps","GET /data/summary":"Get statistical summary of device data","POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)","POST /api/batch":"Submit batch telemetry data","GET /dashboard/":"Web dashboard interface","GET /static/*":"Static files","WS /socket.io/":"Real-time updates via Socket.IO","GET /export/database":"Export database to JSON","POST /import/database":"Import database from JSON"},"urls":{"data_latest":"http://188.132.234.72:5000/data/latest","data_history":"http://188.132.234.72:5000/data/history","telemetry":"http://188.132.234.72:5000/api/telemetry","batch":"http://188.132.234.72:5000/api/batch","dashboard":"http://188.132.234.72:5000/dashboard/","websocket":"ws://188.132.234.72:5000/socket.io/"},"database":{"tables":["device_data","latest_device_states","timestamped_data"],"status":"connected","config":{"host":"localhost","database":"database","user":"admin"}},"features":["Real-time telemetry collection","Weather data enrichment with Open-Meteo API","GPS location tracking with timezone detection","Socket.IO time updates","PostgreSQL storage with JSONB","Compressed data support (gzip/deflate)","Device movement tracking","Weather caching optimization","Marine weather data","Historical data streaming with delta detection","Gap analysis","Activity statistics","Database export/import"]}
+
 @sio.event
 async def connect(sid,environ):print(f"[{datetime.datetime.now()}] Socket.IO client connected: {sid}")
+
 @sio.event
 async def disconnect(sid):
  print(f"[{datetime.datetime.now()}] Socket.IO client disconnected: {sid}")
@@ -26,6 +29,7 @@ async def disconnect(sid):
   task=active_connections[sid]['task']
   if not task.done():task.cancel()
   del active_connections[sid]
+
 @sio.on("register_device")
 async def register_device(sid,device_id):
  print(f"[{datetime.datetime.now()}] Device {device_id} registered for time updates on {sid}")
@@ -35,6 +39,7 @@ async def register_device(sid,device_id):
   del active_connections[sid]
  task=sio.start_background_task(send_time_updates,sid,device_id)
  active_connections[sid]={'device_id':device_id,'task':task}
+
 async def send_time_updates(sid,device_id):
  try:
   while True:
@@ -64,12 +69,14 @@ async def send_time_updates(sid,device_id):
    await asyncio.sleep(1)
  except asyncio.CancelledError:print(f"[{datetime.datetime.now()}] Time update task cancelled for device {device_id}")
  except Exception as e:print(f"[{datetime.datetime.now()}] Error in time update task for device {device_id}: {e}")
+
 @app.on_event("startup")
 async def startup():
  print(f"[{datetime.datetime.now()}] Starting hoarder_server...")
  await init_db()
  print(f"[{datetime.datetime.now()}] Database initialized successfully")
  print(f"[{datetime.datetime.now()}] Server ready at http://188.132.234.72:5000")
+
 @app.on_event("shutdown")
 async def shutdown():
  print(f"[{datetime.datetime.now()}] Shutting down hoarder_server...")
@@ -77,6 +84,7 @@ async def shutdown():
   task=connection['task']
   if not task.done():task.cancel()
  active_connections.clear()
+
 app.mount("/static",StaticFiles(directory="app/static"),name="static")
 app.include_router(data.router)
 app.include_router(dashboard.router,prefix="/dashboard")

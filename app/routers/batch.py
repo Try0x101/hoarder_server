@@ -1,12 +1,13 @@
+# app/routers/batch.py
 import json,datetime,asyncpg
 from fastapi import APIRouter,Request,BackgroundTasks,HTTPException
 from fastapi.responses import JSONResponse
 from app.utils import enrich_with_weather_data
-from typing import List,Dict,Any
-DB_CONFIG={"user":"admin","password":"admin","database":"database","host":"localhost"}
-class PrettyJSONResponse(JSONResponse):
- def render(self,content):return json.dumps(content,ensure_ascii=False,allow_nan=False,indent=2,separators=(",",": ")).encode("utf-8")
+from app.db import DB_CONFIG
+from app.responses import PrettyJSONResponse
+
 router=APIRouter()
+
 async def save_data(data:dict):
  device_id=data.get("device_id") or data.get("id")
  if not device_id:
@@ -41,6 +42,7 @@ async def save_data(data:dict):
   merged_data=deep_merge(data,current_state_for_merge)
   await conn.execute("INSERT INTO latest_device_states(device_id,payload,received_at)VALUES($1,$2,now())ON CONFLICT(device_id)DO UPDATE SET payload=EXCLUDED.payload,received_at=EXCLUDED.received_at",device_id,json.dumps(merged_data))
  finally:await conn.close()
+
 @router.post("/api/batch",response_class=PrettyJSONResponse)
 async def receive_batch_data(request:Request,background_tasks:BackgroundTasks):
  try:

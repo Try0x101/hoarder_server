@@ -1,11 +1,12 @@
-import json,datetime,uuid
+# app/routers/telemetry.py
+import json,datetime
 from fastapi import APIRouter,Request,BackgroundTasks
-from fastapi.responses import JSONResponse
+from app.responses import PrettyJSONResponse
 from app.utils import decode_raw_data,enrich_with_weather_data
 from app.db import save_data,save_timestamped_data
-class PrettyJSONResponse(JSONResponse):
- def render(self,content):return json.dumps(content,ensure_ascii=False,allow_nan=False,indent=2,separators=(",",": ")).encode("utf-8")
+
 router=APIRouter()
+
 @router.post("/api/telemetry",response_class=PrettyJSONResponse)
 async def receive_telemetry(request:Request,background_tasks:BackgroundTasks):
  raw=await request.body()
