@@ -66,4 +66,4 @@ async def receive_batch_data(request:Request,background_tasks:BackgroundTasks):
   print(f"[{datetime.datetime.now()}] ERROR in batch endpoint: {str(e)}")
   import traceback
   print(f"[{datetime.datetime.now()}] {traceback.format_exc()}")
-  return JSONResponse(status_code=500,content={"error":f"Internal server error: {str(e)}"})
+  return JSONResponse(status_code=500,content={"error":"Internal server error"})

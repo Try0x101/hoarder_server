@@ -9,7 +9,7 @@ from app.db import DB_CONFIG
 router=APIRouter()
 
 @router.get("/data/history")
-async def get_history(device_id:str=Query(None,description="Device ID to get history for (optional)"),limit:int=Query(1000,description="Maximum number of records to return per page"),offset:int=Query(0,description="Number of records to skip for pagination")):
+async def get_history(device_id:str=Query(None,description="Device ID to get history for (optional)"),limit:int=Query(256,description="Maximum number of records to return per page"),offset:int=Query(0,description="Number of records to skip for pagination")):
  try:
   cutoff_date=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=365)
   conn=await asyncpg.connect(**DB_CONFIG)
@@ -17,8 +17,8 @@ async def get_history(device_id:str=Query(None,description="Device ID to get his
    if not device_id:
     devices=await conn.fetch("SELECT device_id,MAX(received_at) as last_active,COUNT(*) as record_count FROM device_data WHERE received_at>=$1 GROUP BY device_id ORDER BY last_active DESC",cutoff_date)
     total_records=await conn.fetchval("SELECT COUNT(*) FROM device_data WHERE received_at>=$1",cutoff_date)
-    device_links=[{"device_id":d["device_id"],"last_active":d["last_active"].isoformat(),"record_count":d["record_count"],"links":{"history":f"/data/history?device_id={d['device_id']}","gaps":f"/data/gaps?device_id={d['device_id']}","summary":f"/data/summary?device_id={d['device_id']}"}}for d in devices]
-    return{"server_time":datetime.datetime.now().isoformat(),"period":"1year","total_devices":len(devices),"total_records":total_records,"devices":device_links,"notice":"To view data for a specific device, click on the history link or add '?device_id=DEVICE_ID' to the URL"}
+    device_links=[{"device_id":d["device_id"],"last_active":d["last_active"].isoformat(),"record_count":d["record_count"],"links":{"history":f"/data/history?device_id={d['device_id']}&offset=0&limit={limit}","gaps":f"/data/gaps?device_id={d['device_id']}","summary":f"/data/summary?device_id={d['device_id']}"}}for d in devices]
+    return{"server_time":datetime.datetime.now().isoformat(),"period":"1year","total_devices":len(devices),"total_records":total_records,"devices":device_links,"notice":"To view data for a specific device, click on the history link or add '?device_id=DEVICE_ID&offset=0&limit=256' to the URL"}
    device_exists=await conn.fetchval("SELECT EXISTS(SELECT 1 FROM latest_device_states WHERE device_id=$1)",device_id)
    if not device_exists:return JSONResponse(status_code=404,content={"error":f"Device with ID '{device_id}' not found"})
    record_count=await conn.fetchval("SELECT COUNT(*) FROM device_data WHERE device_id=$1 AND received_at>=$2",device_id,cutoff_date)
@@ -33,9 +33,9 @@ async def get_history(device_id:str=Query(None,description="Device ID to get his
     except Exception as e:print(f"[{datetime.datetime.now()}] Error processing row: {e}")
    total_pages=(record_count+limit-1)//limit
    current_page=offset//limit+1
-   response={"device_id":device_id,"period":"1year","record_count":record_count,"records_shown":len(results),"pagination":{"current_page":current_page,"total_pages":total_pages,"limit":limit,"offset":offset},"pagination_help":{"instructions":"To navigate through pages, use the offset parameter in the URL.","examples":{"first_page":f"/data/history?device_id={device_id}&offset=0","page_2":f"/data/history?device_id={device_id}&offset=1000","page_3":f"/data/history?device_id={device_id}&offset=2000"},"tip":"Each page shows up to 1000 records. To see the next 1000 records, increase the offset by 1000."},"links":{"back_to_devices":f"/data/history","gaps":f"/data/gaps?device_id={device_id}","summary":f"/data/summary?device_id={device_id}"}}
-   if current_page>1:response["links"]["previous_page"]=f"/data/history?device_id={device_id}&offset={offset-limit}"
-   if current_page<total_pages:response["links"]["next_page"]=f"/data/history?device_id={device_id}&offset={offset+limit}"
+   response={"device_id":device_id,"period":"1year","record_count":record_count,"records_shown":len(results),"pagination":{"current_page":current_page,"total_pages":total_pages,"limit":limit,"offset":offset},"pagination_help":{"instructions":"To navigate through pages, use the offset and limit parameters in the URL.","examples":{"first_page":f"/data/history?device_id={device_id}&offset=0&limit={limit}","page_2":f"/data/history?device_id={device_id}&offset={limit}&limit={limit}","page_3":f"/data/history?device_id={device_id}&offset={limit*2}&limit={limit}"},"tip":f"Each page shows up to {limit} records. To see the next {limit} records, increase the offset by {limit}."},"links":{"back_to_devices":f"/data/history","gaps":f"/data/gaps?device_id={device_id}","summary":f"/data/summary?device_id={device_id}"}}
+   if current_page>1:response["links"]["previous_page"]=f"/data/history?device_id={device_id}&offset={offset-limit}&limit={limit}"
+   if current_page<total_pages:response["links"]["next_page"]=f"/data/history?device_id={device_id}&offset={offset+limit}&limit={limit}"
    response["data"]=results
    return response
   finally:await conn.close()

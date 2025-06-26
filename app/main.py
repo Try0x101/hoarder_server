@@ -5,7 +5,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi import Request
 from app.responses import PrettyJSONResponse
 from app.db import init_db,get_latest_data
-from app.routers import data,dashboard,telemetry,history,batch,export_import
+from app.routers import data,dashboard,history,telemetry,batch,export_import
 from timezonefinder import TimezoneFinder
 
 app=fastapi.FastAPI(default_response_class=PrettyJSONResponse)
@@ -17,7 +17,60 @@ active_connections={}
 
 @app.get("/")
 async def root_endpoints(request:Request):
- return{"server":"hoarder_server IoT Telemetry API","status":"active","version":"1.0.0","timestamp":datetime.datetime.now().isoformat(),"endpoints":{"GET /":"This endpoint - API documentation","GET /data/latest":"Get latest data from all devices","GET /data/history":"Get historical data with time filtering","GET /data/gaps":"Get analysis of data gaps","GET /data/summary":"Get statistical summary of device data","POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)","POST /api/batch":"Submit batch telemetry data","GET /dashboard/":"Web dashboard interface","GET /static/*":"Static files","WS /socket.io/":"Real-time updates via Socket.IO","GET /export/database":"Export database to JSON","POST /import/database":"Import database from JSON"},"urls":{"data_latest":"http://188.132.234.72:5000/data/latest","data_history":"http://188.132.234.72:5000/data/history","telemetry":"http://188.132.234.72:5000/api/telemetry","batch":"http://188.132.234.72:5000/api/batch","dashboard":"http://188.132.234.72:5000/dashboard/","websocket":"ws://188.132.234.72:5000/socket.io/"},"database":{"tables":["device_data","latest_device_states","timestamped_data"],"status":"connected","config":{"host":"localhost","database":"database","user":"admin"}},"features":["Real-time telemetry collection","Weather data enrichment with Open-Meteo API","GPS location tracking with timezone detection","Socket.IO time updates","PostgreSQL storage with JSONB","Compressed data support (gzip/deflate)","Device movement tracking","Weather caching optimization","Marine weather data","Historical data streaming with delta detection","Gap analysis","Activity statistics","Database export/import"]}
+ return{
+  "server":"hoarder_server IoT Telemetry API",
+  "status":"active",
+  "version":"1.0.0",
+  "timestamp":datetime.datetime.now().isoformat(),
+  "endpoints":{
+   "GET /":"This endpoint - API documentation",
+   "GET /data/latest":"Get latest data from all devices",
+   "GET /data/history":"Get historical data with time filtering",
+   "GET /data/gaps":"Get analysis of data gaps",
+   "GET /data/summary":"Get statistical summary of device data",
+   "POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)",
+   "POST /api/batch":"Submit batch telemetry data",
+   "GET /dashboard/":"Web dashboard interface",
+   "GET /static/*":"Static files",
+   "WS /socket.io/":"Real-time updates via Socket.IO",
+   "GET /export/database":"Export database to JSON",
+   "POST /import/database":"Import database from JSON"
+  },
+  "urls":{
+   "get":{
+    "data_latest":"http://188.132.234.72:5000/data/latest",
+    "data_history":"http://188.132.234.72:5000/data/history",
+    "dashboard":"http://188.132.234.72:5000/dashboard/",
+    "export_database":"http://188.132.234.72:5000/export/database"
+   },
+   "post":{
+    "telemetry":"http://188.132.234.72:5000/api/telemetry",
+    "batch":"http://188.132.234.72:5000/api/batch",
+    "import_database":"http://188.132.234.72:5000/import/database"
+   },
+   "websocket":"ws://188.132.234.72:5000/socket.io/"
+  },
+  "database":{
+   "tables":["device_data","latest_device_states","timestamped_data"],
+   "status":"connected",
+   "config":{"host":"localhost","database":"database","user":"admin"}
+  },
+  "features":[
+   "Real-time telemetry collection",
+   "Weather data enrichment with Open-Meteo API",
+   "GPS location tracking with timezone detection",
+   "Socket.IO time updates",
+   "PostgreSQL storage with JSONB",
+   "Compressed data support (gzip/deflate)",
+   "Device movement tracking",
+   "Weather caching optimization",
+   "Marine weather data",
+   "Historical data streaming with delta detection",
+   "Gap analysis",
+   "Activity statistics",
+   "Database export/import"
+  ]
+ }
 
 @sio.event
 async def connect(sid,environ):print(f"[{datetime.datetime.now()}] Socket.IO client connected: {sid}")

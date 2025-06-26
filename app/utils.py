@@ -8,10 +8,10 @@ import pytz
 WEATHER_CODE_DESCRIPTIONS={0:"Clear sky",1:"Mainly clear",2:"Partly cloudy",3:"Overcast",45:"Fog",48:"Depositing rime fog",51:"Light drizzle",53:"Moderate drizzle",55:"Dense drizzle",56:"Light freezing drizzle",57:"Dense freezing drizzle",61:"Slight rain",63:"Moderate rain",65:"Heavy rain",66:"Light freezing rain",67:"Heavy freezing rain",71:"Slight snow fall",73:"Moderate snow fall",75:"Heavy snow fall",77:"Snow grains",80:"Slight rain showers",81:"Moderate rain showers",82:"Violent rain showers",85:"Slight snow showers",86:"Heavy snow showers",95:"Thunderstorm",96:"Thunderstorm with slight hail",99:"Thunderstorm with heavy hail"}
 tf=TimezoneFinder()
 CACHE_DIR="/tmp/weather_cache_optimized"
-WEATHER_CACHE_DURATION=3600
+WEATHER_CACHE_DURATION=3900
 DISTANCE_THRESHOLD_KM=1.0
+MIN_REQUEST_INTERVAL=300
 DAILY_API_LIMIT=9000
-REQUESTS_PER_MINUTE_LIMIT=6
 REQUEST_LOG_FILE="/tmp/weather_requests.log"
 
 def calculate_distance_km(lat1:float,lon1:float,lat2:float,lon2:float)->float:
@@ -51,6 +51,18 @@ def get_today_request_count()->int:
   print(f"[{datetime.datetime.now()}] DEBUG: Failed to count requests: {e}")
   return 0
 
+def get_last_request_time()->Optional[datetime.datetime]:
+ try:
+  if not os.path.exists(REQUEST_LOG_FILE):return None
+  with open(REQUEST_LOG_FILE,'r') as f:
+   lines=f.readlines()
+   if not lines:return None
+   last_line=lines[-1].strip()
+   return datetime.datetime.fromisoformat(last_line)
+ except Exception as e:
+  print(f"[{datetime.datetime.now()}] DEBUG: Failed to get last request time: {e}")
+  return None
+
 def cleanup_old_request_logs():
  try:
   if not os.path.exists(REQUEST_LOG_FILE):return
@@ -71,6 +83,12 @@ def can_make_api_request()->bool:
  if today_count>=DAILY_API_LIMIT:
   print(f"[{datetime.datetime.now()}] WARNING: Daily API limit reached ({today_count}/{DAILY_API_LIMIT})")
   return False
+ last_request=get_last_request_time()
+ if last_request:
+  time_since_last=(datetime.datetime.now()-last_request).total_seconds()
+  if time_since_last<MIN_REQUEST_INTERVAL:
+   print(f"[{datetime.datetime.now()}] DEBUG: Rate limit - last request {int(time_since_last)}s ago (min {MIN_REQUEST_INTERVAL}s)")
+   return False
  print(f"[{datetime.datetime.now()}] DEBUG: API requests today: {today_count}/{DAILY_API_LIMIT}")
  return True
 
@@ -128,7 +146,7 @@ async def get_weather_from_wttr(lat:float,lon:float)->Optional[Dict[str,Any]]:
    if response.status_code==200:
     data=response.json()
     current=data.get('current_condition',[{}])[0]
-    result={'weather_temp':float(current.get('temp_C',0)) if current.get('temp_C') else None,'weather_humidity':int(current.get('humidity',0)) if current.get('humidity') else None,'weather_apparent_temp':float(current.get('FeelsLikeC',0)) if current.get('FeelsLikeC') else None,'precipitation':float(current.get('precipMM',0)) if current.get('precipMM') else None,'pressure_msl':float(current.get('pressure',0)) if current.get('pressure') else None,'cloud_cover':int(current.get('cloudcover',0)) if current.get('cloudcover') else None,'wind_speed_10m':float(current.get('windspeedKmph',0))/3.6 if current.get('windspeedKmph') else None,'wind_direction_10m':int(current.get('winddirDegree',0)) if current.get('winddirDegree') else None}
+    result={'weather_temp':float(current.get('temp_C',0)) if current.get('temp_C') else None,'weather_humidity':int(current.get('humidity',0)) if current.get('humidity') else None,'weather_apparent_temp':float(current.get('FeelsLikeC',0)) if current.get('FeelsLikeC') else None,'precipitation':float(current.get('precipMM',0)) if current.get('precipMM') else None,'pressure_msl':float(current.get('pressure',0)) if current.get('pressure') else None,'cloud_cover':int(current.get('cloudcover',0)) if current.get('cloudcover') else None,'wind_speed_10m':float(current.get('windspeedKmph',0))/3.6 if current.get('windspeedKmph') else None,'wind_direction_10m':int(current.get('winddirDegree',0)) if current.get('winddirDegree') else None,'weather_observation_time':current.get('observation_time')}
     print(f"[{datetime.datetime.now()}] SUCCESS: wttr.in data parsed")
     return result
    else:print(f"[{datetime.datetime.now()}] ERROR: wttr.in returned {response.status_code}")
@@ -141,7 +159,11 @@ async def get_weather_data(lat:float,lon:float,force_update:bool=False)->Optiona
   cached_data=find_nearby_cached_weather(lat,lon)
   if cached_data:return cached_data
  if not can_make_api_request():
-  print(f"[{datetime.datetime.now()}] WARNING: API limit exceeded, trying fallback...")
+  print(f"[{datetime.datetime.now()}] WARNING: API rate limited, trying cached data...")
+  cached_data=find_nearby_cached_weather(lat,lon)
+  if cached_data:
+   print(f"[{datetime.datetime.now()}] DEBUG: Using cached data due to rate limit")
+   return cached_data
   wttr_data=await get_weather_from_wttr(lat,lon)
   if wttr_data:
    save_weather_to_cache(lat,lon,wttr_data)
@@ -165,7 +187,7 @@ async def get_weather_data(lat:float,lon:float,force_update:bool=False)->Optiona
      try:
       weather_data=weather_response.json()
       current=weather_data.get('current',{})
-      weather_result={'weather_temp':current.get('temperature_2m'),'weather_humidity':current.get('relative_humidity_2m'),'weather_apparent_temp':current.get('apparent_temperature'),'precipitation':current.get('precipitation'),'weather_code':current.get('weather_code'),'pressure_msl':current.get('pressure_msl'),'cloud_cover':current.get('cloud_cover'),'wind_speed_10m':current.get('wind_speed_10m'),'wind_direction_10m':current.get('wind_direction_10m'),'wind_gusts_10m':current.get('wind_gusts_10m')}
+      weather_result={'weather_temp':current.get('temperature_2m'),'weather_humidity':current.get('relative_humidity_2m'),'weather_apparent_temp':current.get('apparent_temperature'),'precipitation':current.get('precipitation'),'weather_code':current.get('weather_code'),'pressure_msl':current.get('pressure_msl'),'cloud_cover':current.get('cloud_cover'),'wind_speed_10m':current.get('wind_speed_10m'),'wind_direction_10m':current.get('wind_direction_10m'),'wind_gusts_10m':current.get('wind_gusts_10m'),'weather_observation_time':current.get('time')}
       result.update(weather_result)
       print(f"[{datetime.datetime.now()}] SUCCESS: Open-Meteo weather data received")
      except Exception as json_error:print(f"[{datetime.datetime.now()}] ERROR: Failed to parse weather JSON: {json_error}")
@@ -296,55 +318,90 @@ def transform_device_data(received_data):
    if lat_float is not None and lon_float is not None:location_date,location_time,location_timezone=get_location_time_info(lat_float,lon_float)
   except Exception as e:print(f"Error processing coordinates: lat={lat}, lon={lon}, error={e}")
   
- # Convert wind direction to compass points
- wind_direction_compass = ""
+ wind_direction_compass=""
  if 'wind_direction_10m' in received_data and received_data.get('wind_direction_10m') is not None:
-  direction = int(float(received_data.get('wind_direction_10m')))
-  if 337.5 <= direction < 360 or 0 <= direction < 22.5: wind_direction_compass = "N"
-  elif 22.5 <= direction < 67.5: wind_direction_compass = "NE"
-  elif 67.5 <= direction < 112.5: wind_direction_compass = "E"
-  elif 112.5 <= direction < 157.5: wind_direction_compass = "SE"
-  elif 157.5 <= direction < 202.5: wind_direction_compass = "S"
-  elif 202.5 <= direction < 247.5: wind_direction_compass = "SW"
-  elif 247.5 <= direction < 292.5: wind_direction_compass = "W"
-  elif 292.5 <= direction < 337.5: wind_direction_compass = "NW"
+  direction=int(float(received_data.get('wind_direction_10m')))
+  if 337.5<=direction<360 or 0<=direction<22.5:wind_direction_compass="N"
+  elif 22.5<=direction<67.5:wind_direction_compass="NE"
+  elif 67.5<=direction<112.5:wind_direction_compass="E"
+  elif 112.5<=direction<157.5:wind_direction_compass="SE"
+  elif 157.5<=direction<202.5:wind_direction_compass="S"
+  elif 202.5<=direction<247.5:wind_direction_compass="SW"
+  elif 247.5<=direction<292.5:wind_direction_compass="W"
+  elif 292.5<=direction<337.5:wind_direction_compass="NW"
   
- # Get the last weather API fetch time for this specific device
- weather_last_fetched = None
- weather_fetch_formatted = None
+ weather_observation_formatted=None
+ weather_observation_time=received_data.get('weather_observation_time')
  
- device_id = received_data.get('id') or received_data.get('device_id')
+ if weather_observation_time:
+  try:
+   obs_time=None
+   if 'T' in str(weather_observation_time):
+    obs_time=datetime.datetime.fromisoformat(weather_observation_time)
+   elif ':' in str(weather_observation_time):
+    obs_str=str(weather_observation_time).strip()
+    if 'AM' in obs_str.upper() or 'PM' in obs_str.upper():
+     try:
+      obs_time=datetime.datetime.strptime(obs_str,'%I:%M %p')
+      obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
+     except:
+      try:
+       obs_time=datetime.datetime.strptime(obs_str,'%H:%M')
+       obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
+      except:pass
+    else:
+     try:
+      obs_time=datetime.datetime.strptime(obs_str,'%H:%M')
+      obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
+     except:pass
+   
+   if obs_time:
+    if location_timezone and location_timezone.startswith('UTC'):
+     offset_str=location_timezone[3:]
+     if offset_str:
+      offset_hours=int(offset_str.split(':')[0])
+      if location_timezone.startswith('UTC-'):offset_hours=-abs(offset_hours)
+      obs_time_local=obs_time+datetime.timedelta(hours=offset_hours)
+     else:obs_time_local=obs_time
+     weather_observation_formatted=f"{obs_time_local.strftime('%d.%m.%Y %H:%M')} {location_timezone}"
+    else:weather_observation_formatted=f"{obs_time.strftime('%d.%m.%Y %H:%M')} UTC"
+   else:weather_observation_formatted=f"{weather_observation_time} (local time)"
+  except Exception as e:
+   print(f"Error formatting weather observation time: {e}")
+   weather_observation_formatted=f"{weather_observation_time} (format error)"
+
+ weather_last_fetched=None
+ weather_fetch_formatted=None
+ 
+ device_id=received_data.get('id') or received_data.get('device_id')
  if device_id:
   try:
    from app.device_tracker import load_device_positions
-   positions = load_device_positions()
-   device_key = str(device_id)
+   positions=load_device_positions()
+   device_key=str(device_id)
    if device_key in positions and 'last_weather_update' in positions[device_key]:
-    weather_last_fetched = positions[device_key]['last_weather_update']
+    weather_last_fetched=positions[device_key]['last_weather_update']
     
-    # Format the timestamp based on the device's timezone if available
     try:
-     weather_time = datetime.datetime.fromisoformat(weather_last_fetched)
+     weather_time=datetime.datetime.fromisoformat(weather_last_fetched)
      if location_timezone and location_timezone.startswith('UTC'):
-      # Parse the UTC offset from location_timezone (format: 'UTC+X' or 'UTC-X')
-      offset_str = location_timezone[3:]
-      offset_hours = int(offset_str.split(':')[0])
-      
-      # Calculate the local time based on UTC offset
-      weather_time_local = weather_time + datetime.timedelta(hours=offset_hours)
-      weather_fetch_formatted = weather_time_local.strftime("%d.%m.%Y %H:%M:%S")
+      offset_str=location_timezone[3:]
+      if offset_str:
+       offset_hours=int(offset_str.split(':')[0])
+       if location_timezone.startswith('UTC-'):offset_hours=-abs(offset_hours)
+       weather_time_local=weather_time+datetime.timedelta(hours=offset_hours)
+      else:weather_time_local=weather_time
+      weather_fetch_formatted=weather_time_local.strftime("%d.%m.%Y %H:%M:%S")
      else:
-      # If no timezone info, just format the time as is
-      weather_fetch_formatted = weather_time.strftime("%d.%m.%Y %H:%M:%S")
+      weather_fetch_formatted=weather_time.strftime("%d.%m.%Y %H:%M:%S")
     except Exception as e:
      print(f"Error formatting weather fetch time: {e}")
-     weather_fetch_formatted = weather_last_fetched
+     weather_fetch_formatted=weather_last_fetched
   except Exception as e:
    print(f"Error getting weather fetch time from device tracker: {e}")
   
- # If not available from device tracker, use current timestamp
  if not weather_fetch_formatted:
-  weather_fetch_formatted = datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+  weather_fetch_formatted=datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
   
  return{
   'device_id':received_data.get('id'),
@@ -377,7 +434,8 @@ def transform_device_data(received_data):
   'weather_wind_speed':f"{safe_int(received_data.get('wind_speed_10m'))} m/s" if 'wind_speed_10m' in received_data and received_data.get('wind_speed_10m') is not None else None,
   'weather_wind_direction':wind_direction_compass if wind_direction_compass else None,
   'weather_wind_gusts':f"{safe_int(received_data.get('wind_gusts_10m'))} m/s" if 'wind_gusts_10m' in received_data and received_data.get('wind_gusts_10m') is not None else None,
-  'weather_last_updated': weather_fetch_formatted,
+  'weather_observation_time':weather_observation_formatted,
+  'weather_last_fetch_request_time':weather_fetch_formatted,
   'marine_wave_height':f"{safe_int(received_data.get('marine_wave_height'))} m" if 'marine_wave_height' in received_data and received_data.get('marine_wave_height') is not None else None,
   'marine_wave_direction':f"{safe_int(received_data.get('marine_wave_direction'))}°" if 'marine_wave_direction' in received_data and received_data.get('marine_wave_direction') is not None else None,
   'marine_wave_period':f"{safe_int(received_data.get('marine_wave_period'))} s" if 'marine_wave_period' in received_data and received_data.get('marine_wave_period') is not None else None,
