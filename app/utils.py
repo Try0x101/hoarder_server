@@ -299,26 +299,19 @@ def safe_float(value):
  try:return float(value)
  except (ValueError,TypeError):return None
 
-# app/utils.py
 def transform_device_data(received_data):
  timestamp_unix=received_data.get('timestamp')
  transformed_timestamp=None
  if timestamp_unix is not None:
   try:transformed_timestamp=datetime.datetime.fromtimestamp(timestamp_unix).isoformat()
   except (TypeError,ValueError):transformed_timestamp=None
- location_date=None
- location_time=None
- location_timezone=None
- location_tz=None
- lat=received_data.get('lat')
- lon=received_data.get('lon')
+ location_date,location_time,location_timezone,location_tz=None,None,None,None
+ lat,lon=received_data.get('lat'),received_data.get('lon')
  if lat is not None and lon is not None:
   try:
-   lat_float=safe_float(lat)
-   lon_float=safe_float(lon)
+   lat_float,lon_float=safe_float(lat),safe_float(lon)
    if lat_float is not None and lon_float is not None:location_date,location_time,location_timezone,location_tz=get_location_time_info(lat_float,lon_float)
   except Exception as e:print(f"Error processing coordinates: lat={lat}, lon={lon}, error={e}")
-
  wind_direction_compass=""
  if 'wind_direction_10m' in received_data and received_data.get('wind_direction_10m') is not None:
   direction=int(float(received_data.get('wind_direction_10m')))
@@ -330,32 +323,19 @@ def transform_device_data(received_data):
   elif 202.5<=direction<247.5:wind_direction_compass="SW"
   elif 247.5<=direction<292.5:wind_direction_compass="W"
   elif 292.5<=direction<337.5:wind_direction_compass="NW"
-
  weather_observation_formatted=None
  weather_observation_time=received_data.get('weather_observation_time')
-
  if weather_observation_time:
   try:
    obs_time=None
-   if 'T' in str(weather_observation_time):
-    obs_time=datetime.datetime.fromisoformat(weather_observation_time)
+   if 'T' in str(weather_observation_time):obs_time=datetime.datetime.fromisoformat(weather_observation_time)
    elif ':' in str(weather_observation_time):
     obs_str=str(weather_observation_time).strip()
-    if 'AM' in obs_str.upper() or 'PM' in obs_str.upper():
-     try:
-      obs_time=datetime.datetime.strptime(obs_str,'%I:%M %p')
-      obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
-     except:
-      try:
-       obs_time=datetime.datetime.strptime(obs_str,'%H:%M')
-       obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
-      except:pass
-    else:
-     try:
-      obs_time=datetime.datetime.strptime(obs_str,'%H:%M')
-      obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
-     except:pass
-
+    try:
+     if 'AM' in obs_str.upper() or 'PM' in obs_str.upper():obs_time=datetime.datetime.strptime(obs_str,'%I:%M %p')
+     else:obs_time=datetime.datetime.strptime(obs_str,'%H:%M')
+     obs_time=obs_time.replace(year=datetime.datetime.now().year,month=datetime.datetime.now().month,day=datetime.datetime.now().day)
+    except:pass
    if obs_time:
     if location_tz:
      if obs_time.tzinfo is None:obs_time=obs_time.replace(tzinfo=pytz.utc)
@@ -368,16 +348,12 @@ def transform_device_data(received_data):
   except Exception as e:
    print(f"Error formatting weather observation time: {e}")
    weather_observation_formatted=f"{weather_observation_time} (format error)"
-
- # Process barometric data
  barometric_data=None
  if 'bar' in received_data and received_data.get('bar') is not None:
   bar_value=safe_float(received_data.get('bar'))
   if bar_value is not None:
-   if bar_value < 0:
-    barometric_data=f"{abs(bar_value)} hPa"
-   else:
-    barometric_data=f"{bar_value} m"
+   if bar_value<0:barometric_data=f"{abs(bar_value)} hPa"
+   else:barometric_data=f"{bar_value} m"
  weather_fetch_formatted=None
  device_id=received_data.get('id') or received_data.get('device_id')
  if device_id:
@@ -388,41 +364,27 @@ def transform_device_data(received_data):
    if device_key in positions and 'last_weather_update' in positions[device_key]:
     weather_last_fetched_iso=positions[device_key]['last_weather_update']
     weather_time_utc=None
-    try:
-     weather_time_utc=datetime.datetime.fromisoformat(weather_last_fetched_iso)
+    try:weather_time_utc=datetime.datetime.fromisoformat(weather_last_fetched_iso)
     except ValueError:
-     try:
-      weather_time_utc=datetime.datetime.strptime(weather_last_fetched_iso,'%d.%m.%Y %H:%M:%S')
+     try:weather_time_utc=datetime.datetime.strptime(weather_last_fetched_iso,'%d.%m.%Y %H:%M:%S')
      except Exception as strptime_err:
       print(f"Could not parse weather fetch timestamp '{weather_last_fetched_iso}': {strptime_err}")
       weather_fetch_formatted=weather_last_fetched_iso
     if weather_time_utc:
-     if weather_time_utc.tzinfo is None:
-      weather_time_utc=pytz.utc.localize(weather_time_utc)
+     if weather_time_utc.tzinfo is None:weather_time_utc=pytz.utc.localize(weather_time_utc)
      if location_tz:
       weather_time_local=weather_time_utc.astimezone(location_tz)
       weather_fetch_formatted=f"{weather_time_local.strftime('%d.%m.%Y %H:%M:%S')} {location_timezone}"
-     else:
-      weather_fetch_formatted=f"{weather_time_utc.strftime('%d.%m.%Y %H:%M:%S')} UTC"
-  except Exception as e:
-   print(f"Error getting weather fetch time from device tracker: {e}")
-
- if not weather_fetch_formatted:
-  weather_fetch_formatted=datetime.datetime.now(datetime.timezone.utc).strftime("%d.%m.%Y %H:%M:%S")+" UTC"
-
- # Process BSSID to determine network_active
+     else:weather_fetch_formatted=f"{weather_time_utc.strftime('%d.%m.%Y %H:%M:%S')} UTC"
+  except Exception as e:print(f"Error getting weather fetch time from device tracker: {e}")
+ if not weather_fetch_formatted:weather_fetch_formatted=datetime.datetime.now(datetime.timezone.utc).strftime("%d.%m.%Y %H:%M:%S")+" UTC"
  network_active='Wi-Fi' if received_data.get('bssid') and received_data.get('bssid') not in ['0','','error'] else received_data.get('nt')
- 
- # Process barometric data
- barometric_data=None
- if 'bar' in received_data and received_data.get('bar') is not None:
-  bar_value=safe_float(received_data.get('bar'))
-  if bar_value is not None:
-   if bar_value < 0:
-    barometric_data=f"{abs(bar_value)} hPa"
-   else:
-    barometric_data=f"{bar_value} m"
-
+ rssi_val=received_data.get('rssi')
+ cell_signal_strength_val=None
+ if rssi_val is not None:
+  rssi_int=safe_int(rssi_val)
+  if rssi_int is not None and rssi_int not in [0, 1]:
+   cell_signal_strength_val=f"{rssi_int} dBm"
  return{
   'device_id':received_data.get('id'),
   'device_name':received_data.get('n'),
@@ -436,18 +398,13 @@ def transform_device_data(received_data):
   'cell_operator':received_data.get('op'),
   'network_type':received_data.get('nt'),
   'network_active':network_active,
-  'cell_signal_strength':f"{safe_int(received_data.get('rssi'))} dBm" if 'rssi' in received_data and received_data.get('rssi') is not None else None,
+  'cell_signal_strength':cell_signal_strength_val,
   'gps_accuracy':f"{safe_int(received_data.get('acc'))} m" if 'acc' in received_data and received_data.get('acc') is not None else None,
   'gps_altitude':f"{safe_int(received_data.get('alt'))} m" if safe_int(received_data.get('alt')) is not None else None,
   'gps_speed':f"{safe_int(received_data.get('spd'))} km/h" if safe_int(received_data.get('spd')) is not None else None,
-  'wifi_name':received_data.get('ssid'),
-  'wifi_bssid':received_data.get('bssid'),
   'wifi_bssid':received_data.get('bssid'),
   'gps_latitude':received_data.get('lat'),
   'gps_longitude':received_data.get('lon'),
-  'network_download_capacity':f"{safe_int(received_data.get('dn'))} Mbps" if 'dn' in received_data and received_data.get('dn') is not None else None,
-  'network_upload_capacity':f"{safe_int(received_data.get('up'))} Mbps" if 'up' in received_data and received_data.get('up') is not None else None,
-  'barometric_data':barometric_data,
   'network_download_capacity':f"{safe_int(received_data.get('dn'))} Mbps" if 'dn' in received_data and received_data.get('dn') is not None else None,
   'network_upload_capacity':f"{safe_int(received_data.get('up'))} Mbps" if 'up' in received_data and received_data.get('up') is not None else None,
   'barometric_data':barometric_data,

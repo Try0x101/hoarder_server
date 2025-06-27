@@ -1,46 +1,11 @@
-import json,datetime,asyncpg
+import json,datetime
 from fastapi import APIRouter,Request,BackgroundTasks,HTTPException
 from fastapi.responses import JSONResponse
 from app.utils import enrich_with_weather_data
-from app.db import DB_CONFIG
+from app.db import save_data
 from app.responses import PrettyJSONResponse
 
 router=APIRouter()
-
-async def save_data(data:dict):
- device_id=data.get("device_id") or data.get("id")
- if not device_id:
-  print(f"[{datetime.datetime.now()}] Warning: No device_id found in data: {data}")
-  return
- conn=await asyncpg.connect(**DB_CONFIG)
- try:
-  await conn.execute("INSERT INTO device_data(device_id,payload)VALUES($1,$2)",device_id,json.dumps(data))
-  timestamp=None
-  if 'timestamp' in data and data['timestamp'] is not None:
-   try:
-    if isinstance(data['timestamp'],str):timestamp=datetime.datetime.fromisoformat(data['timestamp'])
-    elif isinstance(data['timestamp'],(int,float)):timestamp=datetime.datetime.fromtimestamp(data['timestamp'])
-   except(ValueError,TypeError):pass
-  if timestamp is None:timestamp=datetime.datetime.now(datetime.timezone.utc)
-  is_offline='batch_id' in data and data['batch_id'] is not None
-  data_type=data.get('data_type','telemetry')
-  batch_id=data.get('batch_id')
-  await conn.execute("INSERT INTO timestamped_data(device_id,payload,data_timestamp,data_type,is_offline,batch_id)VALUES($1,$2,$3,$4,$5,$6)",device_id,json.dumps(data),timestamp,data_type,is_offline,batch_id)
-  existing_latest_state_row=await conn.fetchrow("SELECT payload FROM latest_device_states WHERE device_id=$1",device_id)
-  existing_payload_dict={}
-  if existing_latest_state_row and existing_latest_state_row['payload']:
-   try:existing_payload_dict=json.loads(existing_latest_state_row['payload'])
-   except json.JSONDecodeError:existing_payload_dict={}
-  def deep_merge(source,destination):
-   for key,value in source.items():
-    if isinstance(value,dict) and key in destination and isinstance(destination[key],dict):destination[key]=deep_merge(value,destination[key])
-    elif value is not None:destination[key]=value
-   return destination
-  import copy
-  current_state_for_merge=copy.deepcopy(existing_payload_dict)
-  merged_data=deep_merge(data,current_state_for_merge)
-  await conn.execute("INSERT INTO latest_device_states(device_id,payload,received_at)VALUES($1,$2,now())ON CONFLICT(device_id)DO UPDATE SET payload=EXCLUDED.payload,received_at=EXCLUDED.received_at",device_id,json.dumps(merged_data))
- finally:await conn.close()
 
 @router.post("/api/batch",response_class=PrettyJSONResponse)
 async def receive_batch_data(request:Request,background_tasks:BackgroundTasks):
