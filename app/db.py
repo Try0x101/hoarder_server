@@ -31,10 +31,10 @@ async def save_data(data:dict):
  async with pool.acquire() as conn:
   await conn.execute("INSERT INTO device_data(device_id,payload)VALUES($1,$2)",device_id,json.dumps(data))
   timestamp=None
-  if 'timestamp' in data and data['timestamp'] is not None:
+  if 'ts' in data and data['ts'] is not None:
    try:
-    if isinstance(data['timestamp'],str):timestamp=datetime.datetime.fromisoformat(data['timestamp'])
-    elif isinstance(data['timestamp'],(int,float)):timestamp=datetime.datetime.fromtimestamp(data['timestamp'])
+    if isinstance(data['ts'],str):timestamp=datetime.datetime.fromisoformat(data['ts'])
+    elif isinstance(data['ts'],(int,float)):timestamp=datetime.datetime.fromtimestamp(data['ts'])
    except(ValueError,TypeError):pass
   if timestamp is None:timestamp=datetime.datetime.now(datetime.timezone.utc)
   is_offline='batch_id' in data and data['batch_id'] is not None

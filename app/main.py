@@ -28,7 +28,8 @@ async def root_endpoints(request:Request):
    "GET /data/gaps":"Get analysis of data gaps",
    "GET /data/summary":"Get statistical summary of device data",
    "POST /api/telemetry":"Submit IoT device telemetry data (binary/compressed)",
-   "POST /api/batch":"Submit batch telemetry data",
+   "POST /api/batch":"Submit batch telemetry data (full objects)",
+   "POST /api/batch-delta":"Submit batch telemetry data (delta objects)",
    "GET /dashboard/":"Web dashboard interface",
    "GET /static/*":"Static files",
    "WS /socket.io/":"Real-time updates via Socket.IO",
@@ -45,6 +46,7 @@ async def root_endpoints(request:Request):
    "post":{
     "telemetry":"http://188.132.234.72:5000/api/telemetry",
     "batch":"http://188.132.234.72:5000/api/batch",
+    "batch-delta":"http://188.132.234.72:5000/api/batch-delta",
     "import_database":"http://188.132.234.72:5000/import/database"
    },
    "websocket":"ws://188.132.234.72:5000/socket.io/"
