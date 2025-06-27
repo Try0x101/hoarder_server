@@ -369,15 +369,6 @@ def transform_device_data(received_data):
    print(f"Error formatting weather observation time: {e}")
    weather_observation_formatted=f"{weather_observation_time} (format error)"
 
- # Process barometric data
- barometric_data=None
- if 'bar' in received_data and received_data.get('bar') is not None:
-  bar_value=safe_float(received_data.get('bar'))
-  if bar_value is not None:
-   if bar_value < 0:
-    barometric_data=f"{abs(bar_value)} hPa"
-   else:
-    barometric_data=f"{bar_value} m"
  weather_fetch_formatted=None
  device_id=received_data.get('id') or received_data.get('device_id')
  if device_id:
@@ -442,12 +433,8 @@ def transform_device_data(received_data):
   'gps_speed':f"{safe_int(received_data.get('spd'))} km/h" if safe_int(received_data.get('spd')) is not None else None,
   'wifi_name':received_data.get('ssid'),
   'wifi_bssid':received_data.get('bssid'),
-  'wifi_bssid':received_data.get('bssid'),
   'gps_latitude':received_data.get('lat'),
   'gps_longitude':received_data.get('lon'),
-  'network_download_capacity':f"{safe_int(received_data.get('dn'))} Mbps" if 'dn' in received_data and received_data.get('dn') is not None else None,
-  'network_upload_capacity':f"{safe_int(received_data.get('up'))} Mbps" if 'up' in received_data and received_data.get('up') is not None else None,
-  'barometric_data':barometric_data,
   'network_download_capacity':f"{safe_int(received_data.get('dn'))} Mbps" if 'dn' in received_data and received_data.get('dn') is not None else None,
   'network_upload_capacity':f"{safe_int(received_data.get('up'))} Mbps" if 'up' in received_data and received_data.get('up') is not None else None,
   'barometric_data':barometric_data,

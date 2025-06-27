@@ -1,4 +1,3 @@
-# app/responses.py
 import json
 from fastapi.responses import JSONResponse
 

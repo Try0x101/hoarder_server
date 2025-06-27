@@ -1,4 +1,3 @@
-# app/routers/telemetry.py
 import json,datetime
 from fastapi import APIRouter,Request,BackgroundTasks
 from app.responses import PrettyJSONResponse

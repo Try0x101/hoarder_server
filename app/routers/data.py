@@ -1,4 +1,3 @@
-# app/routers/data.py
 from fastapi import APIRouter
 from app.responses import PrettyJSONResponse
 from app.db import get_latest_data

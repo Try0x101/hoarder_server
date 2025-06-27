@@ -1,4 +1,3 @@
-# app/main.py
 import fastapi,socketio,datetime,pytz,asyncio,json
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates

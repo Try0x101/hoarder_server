@@ -1,4 +1,3 @@
-# app/db.py
 import asyncpg,json,datetime,copy,asyncio
 from typing import Optional,Dict,Any,List
 from app.utils import transform_device_data,deep_merge
