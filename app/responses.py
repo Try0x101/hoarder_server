@@ -1,12 +1,9 @@
-import json
+import orjson
 from fastapi.responses import JSONResponse
 
 class PrettyJSONResponse(JSONResponse):
-   def render(self, content):
-       return json.dumps(
-           content,
-           ensure_ascii=False,
-           allow_nan=False,
-           indent=2,
-           separators=(",", ": ")
-       ).encode("utf-8")
+    def render(self, content: any) -> bytes:
+        return orjson.dumps(
+            content,
+            option=orjson.OPT_INDENT_2
+        )

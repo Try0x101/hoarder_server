@@ -11,28 +11,46 @@ router=APIRouter()
 async def get_history(
     device_id:str=Query(None,description="Device ID to get history for (optional)"),
     limit:int=Query(256,description="Maximum number of records to return per page. Max 1024."),
-    offset:int=Query(0,description="Number of records to skip for pagination"),
-    days:int=Query(30,description="Number of days of history to retrieve")
+    days:int=Query(30,description="Number of days of history to retrieve"),
+    cursor:Optional[str]=Query(None, description="Timestamp cursor for pagination")
 ):
  try:
   if limit > 1024:
       limit = 1024
+  
   conn=await asyncpg.connect(**DB_CONFIG)
   try:
    if not device_id:
     cutoff_date=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=365)
     devices=await conn.fetch("SELECT device_id,MAX(received_at) as last_active,COUNT(*) as record_count FROM device_data WHERE received_at>=$1 GROUP BY device_id ORDER BY last_active DESC",cutoff_date)
     total_records=await conn.fetchval("SELECT COUNT(*) FROM device_data WHERE received_at>=$1",cutoff_date)
-    device_links=[{"device_id":d["device_id"],"last_active":d["last_active"].isoformat(),"record_count":d["record_count"],"links":{"history":f"/data/history?device_id={d['device_id']}&offset=0&limit={limit}&days={days}","gaps":f"/data/gaps?device_id={d['device_id']}","summary":f"/data/summary?device_id={d['device_id']}"}}for d in devices]
+    device_links=[{"device_id":d["device_id"],"last_active":d["last_active"].isoformat(),"record_count":d["record_count"],"links":{"history":f"/data/history?device_id={d['device_id']}&limit={limit}&days={days}","gaps":f"/data/gaps?device_id={d['device_id']}","summary":f"/data/summary?device_id={d['device_id']}"}}for d in devices]
     return{"server_time":datetime.datetime.now().isoformat(),"period":"1year","total_devices":len(devices),"total_records":total_records,"devices":device_links}
-   results,record_count=await get_timestamped_history(device_id=device_id, days=days, limit=limit, offset=offset)
+   
+   results,record_count,next_cursor=await get_timestamped_history(device_id=device_id, days=days, limit=limit, last_timestamp=cursor)
+   
    if record_count==0:
     return JSONResponse(content={"data":[],"info":f"No data found for device '{device_id}' in the last {days} days","links":{"back_to_devices":f"/data/history?days={days}"}})
-   total_pages=(record_count+limit-1)//limit
-   current_page=offset//limit+1
-   response={"device_id":device_id,"period":f"{days}days","total_meaningful_changes":record_count,"records_shown":len(results),"pagination":{"current_page":current_page,"total_pages":total_pages,"limit":limit,"offset":offset},"links":{"back_to_devices":f"/data/history?days={days}","gaps":f"/data/gaps?device_id={device_id}","summary":f"/data/summary?device_id={device_id}"}}
-   if current_page>1:response["links"]["previous_page"]=f"/data/history?device_id={device_id}&offset={offset-limit}&limit={limit}&days={days}"
-   if current_page<total_pages:response["links"]["next_page"]=f"/data/history?device_id={device_id}&offset={offset+limit}&limit={limit}&days={days}"
+   
+   response={
+       "device_id":device_id,
+       "period":f"{days}days",
+       "total_meaningful_changes":record_count,
+       "records_shown":len(results),
+       "pagination":{
+           "limit":limit,
+           "next_cursor": next_cursor
+        },
+       "links":{
+           "back_to_devices":f"/data/history?days={days}",
+           "gaps":f"/data/gaps?device_id={device_id}",
+           "summary":f"/data/summary?device_id={device_id}"
+        }
+    }
+
+   if next_cursor:
+       response["links"]["next_page"] = f"/data/history?device_id={device_id}&limit={limit}&days={days}&cursor={next_cursor}"
+
    response["data"]=results
    return response
   finally:await conn.close()

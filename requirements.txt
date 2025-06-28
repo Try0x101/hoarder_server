@@ -16,3 +16,5 @@ msgpack
 httpx
 pydantic
 python-multipart
+orjson
+redis
