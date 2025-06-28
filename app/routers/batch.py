@@ -60,6 +60,7 @@ async def process_delta_batch(deltas: list, source_ip: str):
         conn = await asyncpg.connect(**DB_CONFIG)
         device_states = {}
         batch_id = f"batch_delta_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+        batch_receive_time = datetime.datetime.now()
 
         for delta in deltas:
             device_id = delta.get('id')
@@ -75,6 +76,12 @@ async def process_delta_batch(deltas: list, source_ip: str):
             
             current_state = device_states[device_id]
             reconstructed_payload = deep_merge(delta, copy.deepcopy(current_state))
+            
+            if 'ts' in delta:
+                ts_seconds = delta['ts']
+                current_minute = int(batch_receive_time.timestamp()) // 60
+                full_timestamp = (current_minute * 60) + ts_seconds
+                reconstructed_payload['timestamp'] = full_timestamp
             
             reconstructed_payload['source_ip'] = source_ip
             reconstructed_payload['batch_id'] = batch_id
