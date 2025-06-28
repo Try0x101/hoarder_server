@@ -6,8 +6,19 @@ from app.responses import PrettyJSONResponse
 from app.db import init_db,get_latest_data
 from app.routers import data,dashboard,history,telemetry,batch,export_import
 from timezonefinder import TimezoneFinder
+from app.middleware.rate_limiter import RateLimitMiddleware
 
 app=fastapi.FastAPI(default_response_class=PrettyJSONResponse)
+
+app.add_middleware(
+    RateLimitMiddleware,
+    default_limit=2,
+    default_window=1,
+    large_query_limit=256,
+    large_query_rate_limit=2,
+    large_query_window=1
+)
+
 templates=Jinja2Templates(directory="app/templates")
 sio=socketio.AsyncServer(async_mode="asgi",cors_allowed_origins="*")
 socket_app=socketio.ASGIApp(sio,other_asgi_app=app)
@@ -36,6 +47,15 @@ async def root_endpoints(request:Request):
    "GET /export/database":"Export database to JSON",
    "POST /import/database":"Import database from JSON"
   },
+  "rate_limits": {
+   "all_endpoints": "Maximum 2 requests per second for any endpoint",
+   "large_queries": "For queries with limit > 256, maximum 2 requests per second are allowed"
+  },
+  "query_parameters": {
+   "limit": "Number of records to return (default: 256, max: 1024)",
+   "offset": "Starting position for pagination (default: 0)",
+   "days": "Number of days of history to retrieve (default: 30)"
+  },
   "urls":{
    "get":{
     "data_latest":"http://188.132.234.72:5000/data/latest",
@@ -52,7 +72,7 @@ async def root_endpoints(request:Request):
    "websocket":"ws://188.132.234.72:5000/socket.io/"
   },
   "database":{
-   "tables":["device_data","latest_device_states","timestamped_data"],
+   "tables":["device_data","latest_device_states","timestamped_data","timestamped_data_archive"],
    "status":"connected",
    "config":{"host":"localhost","database":"database","user":"admin"}
   },
@@ -69,7 +89,9 @@ async def root_endpoints(request:Request):
    "Historical data streaming with delta detection",
    "Gap analysis",
    "Activity statistics",
-   "Database export/import"
+   "Database export/import",
+   "Automatic data archiving and cleanup",
+   "Rate limiting for large queries"
   ]
  }
 

@@ -1,4 +1,4 @@
-import asyncpg,json,datetime,copy,asyncio
+import asyncpg,json,datetime,copy,asyncio,random
 from typing import Optional,Dict,Any,List
 from app.utils import transform_device_data,deep_merge
 
@@ -26,30 +26,85 @@ async def init_db():
     raise
 
 async def save_data(data:dict):
- device_id=data.get("device_id") or data.get("id")
- if not device_id:return
- async with pool.acquire() as conn:
-  await conn.execute("INSERT INTO device_data(device_id,payload)VALUES($1,$2)",device_id,json.dumps(data))
-  existing_payload_dict={}
-  existing_latest_state_row=await conn.fetchrow("SELECT payload FROM latest_device_states WHERE device_id=$1",device_id)
-  if existing_latest_state_row and existing_latest_state_row['payload']:
-   try:existing_payload_dict=json.loads(existing_latest_state_row['payload'])
-   except json.JSONDecodeError:pass
-  merged_data=deep_merge(data,copy.deepcopy(existing_payload_dict))
-  await conn.execute("INSERT INTO latest_device_states(device_id,payload,received_at)VALUES($1,$2,now())ON CONFLICT(device_id)DO UPDATE SET payload=EXCLUDED.payload,received_at=EXCLUDED.received_at",device_id,json.dumps(merged_data))
+ try:
+  device_id=data.get("device_id") or data.get("id")
+  if not device_id:
+   print(f"[{datetime.datetime.now()}] WARNING: No device_id found in data")
+   return
 
-async def save_timestamped_data(data:dict,data_timestamp:Optional[datetime.datetime]=None,is_offline:bool=False,batch_id:Optional[str]=None):
- device_id=data.get("device_id") or data.get("id")
- if not device_id:return
- if data_timestamp is None:data_timestamp=datetime.datetime.now()
- data_type=data.get("data_type","delta")
- async with pool.acquire() as conn:
-  await conn.execute("INSERT INTO timestamped_data(device_id,payload,data_timestamp,data_type,is_offline,batch_id)VALUES($1,$2,$3,$4,$5,$6)",device_id,json.dumps(data),data_timestamp,data_type,is_offline,batch_id)
+  async with pool.acquire() as conn:
+   try:
+    max_id = await conn.fetchval("SELECT COALESCE(MAX(id), 0) FROM device_data")
+    new_id = max_id + random.randint(1, 100)
+
+    await conn.execute(
+      "INSERT INTO device_data(id, device_id, payload) VALUES($1, $2, $3)",
+      new_id, device_id, json.dumps(data)
+    )
+
+    existing_payload_dict={}
+    existing_latest_state_row=await conn.fetchrow("SELECT payload FROM latest_device_states WHERE device_id=$1", device_id)
+    if existing_latest_state_row and existing_latest_state_row['payload']:
+     try:
+      existing_payload_dict=json.loads(existing_latest_state_row['payload'])
+     except json.JSONDecodeError:
+      print(f"[{datetime.datetime.now()}] ERROR: Could not parse existing payload for device {device_id}")
+      pass
+
+    merged_data=deep_merge(data, copy.deepcopy(existing_payload_dict))
+    await conn.execute(
+      "INSERT INTO latest_device_states(device_id, payload, received_at) VALUES($1, $2, now()) ON CONFLICT(device_id) DO UPDATE SET payload=EXCLUDED.payload, received_at=EXCLUDED.received_at",
+      device_id, json.dumps(merged_data)
+    )
+    print(f"[{datetime.datetime.now()}] Successfully saved data for device {device_id}")
+   except Exception as e:
+    print(f"[{datetime.datetime.now()}] ERROR in save_data: {str(e)}")
+ except Exception as e:
+  print(f"[{datetime.datetime.now()}] CRITICAL ERROR in save_data: {str(e)}")
+
+async def save_timestamped_data(data:dict, data_timestamp:Optional[datetime.datetime]=None, is_offline:bool=False, batch_id:Optional[str]=None):
+ try:
+  device_id=data.get("device_id") or data.get("id")
+  if not device_id:
+   print(f"[{datetime.datetime.now()}] WARNING: No device_id found in data")
+   return
+
+  if data_timestamp is None:
+   data_timestamp=datetime.datetime.now()
+
+  data_type=data.get("data_type","delta")
+
+  async with pool.acquire() as conn:
+   try:
+    max_id = await conn.fetchval("SELECT COALESCE(MAX(id), 0) FROM timestamped_data")
+    new_id = max_id + random.randint(1, 100)
+
+    await conn.execute(
+      "INSERT INTO timestamped_data(id, device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6, $7)",
+      new_id, device_id, json.dumps(data), data_timestamp, data_type, is_offline, batch_id
+    )
+    print(f"[{datetime.datetime.now()}] Successfully saved timestamped data for device {device_id}")
+   except Exception as e:
+    print(f"[{datetime.datetime.now()}] ERROR in save_timestamped_data: {str(e)}")
+ except Exception as e:
+  print(f"[{datetime.datetime.now()}] CRITICAL ERROR in save_timestamped_data: {str(e)}")
 
 async def get_latest_data():
  async with pool.acquire() as conn:
-  rows=await conn.fetch("SELECT device_id,payload FROM latest_device_states ORDER BY received_at DESC")
-  return[{"device_id":r["device_id"],"payload":transform_device_data(json.loads(r["payload"]))}for r in rows]
+  rows=await conn.fetch("SELECT device_id, payload, received_at FROM latest_device_states ORDER BY received_at DESC")
+  result = []
+  for r in rows:
+   try:
+    payload_dict = json.loads(r["payload"])
+    if 'received_at' not in payload_dict and r["received_at"] is not None:
+     payload_dict['received_at'] = r["received_at"]
+    result.append({
+     "device_id": r["device_id"],
+     "payload": transform_device_data(payload_dict)
+    })
+   except Exception as e:
+    print(f"[{datetime.datetime.now()}] ERROR processing device {r['device_id']}: {str(e)}")
+  return result
 
 def calculate_delta_changes(current_payload:Dict[str,Any],previous_payload:Dict[str,Any])->Dict[str,Any]:
  delta_changes={}
@@ -61,59 +116,74 @@ def calculate_delta_changes(current_payload:Dict[str,Any],previous_payload:Dict[
 async def get_timestamped_history(device_id:Optional[str]=None,days:int=30, limit: int = 256, offset: int = 0):
  async with pool.acquire() as conn:
   time_threshold=datetime.datetime.now()-datetime.timedelta(days=days)
-  query_cols = "device_id, payload, data_timestamp, data_type, is_offline"
+
   if device_id:
-   rows=await conn.fetch(f"SELECT {query_cols} FROM timestamped_data WHERE device_id=$1 AND data_timestamp>=$2 ORDER BY data_timestamp DESC",device_id,time_threshold)
+   count_query = "SELECT COUNT(*) FROM timestamped_data WHERE device_id=$1 AND data_timestamp>=$2"
+   total_records = await conn.fetchval(count_query, device_id, time_threshold)
+
+   query = """
+   SELECT device_id, payload, data_timestamp, data_type, is_offline
+   FROM timestamped_data
+   WHERE device_id=$1 AND data_timestamp>=$2
+   ORDER BY data_timestamp DESC
+   LIMIT $3 OFFSET $4
+   """
+   rows = await conn.fetch(query, device_id, time_threshold, limit, offset)
   else:
-   rows=await conn.fetch(f"SELECT {query_cols} FROM timestamped_data WHERE data_timestamp>=$1 ORDER BY device_id,data_timestamp DESC",time_threshold)
-  
-  devices_data={}
+   count_query = "SELECT COUNT(*) FROM timestamped_data WHERE data_timestamp>=$1"
+   total_records = await conn.fetchval(count_query, time_threshold)
+
+   query = """
+   SELECT device_id, payload, data_timestamp, data_type, is_offline
+   FROM timestamped_data
+   WHERE data_timestamp>=$1
+   ORDER BY device_id, data_timestamp DESC
+   LIMIT $2 OFFSET $3
+   """
+   rows = await conn.fetch(query, time_threshold, limit, offset)
+
+  devices_data = {}
   for r in rows:
-   device_id_key=r["device_id"]
-   if device_id_key not in devices_data:devices_data[device_id_key]=[]
-   try:
-    payload=json.loads(r["payload"])
-    entry={
+    device_id_key = r["device_id"]
+    if device_id_key not in devices_data:
+      devices_data[device_id_key] = []
+    try:
+      payload = json.loads(r["payload"])
+      entry = {
         "payload": payload,
         "data_timestamp": r["data_timestamp"],
         "data_type": r["data_type"],
         "is_offline": r["is_offline"]
-    }
-    devices_data[device_id_key].append(entry)
-   except Exception as e:
-    print(f"Error processing row: {e}")
-    continue
-    
-  result=[]
-  for device_id_key,entries in devices_data.items():
-   previous_payload={}
-   for entry in reversed(entries):
-    current_payload=entry["payload"]
-    delta_payload=calculate_delta_changes(current_payload,previous_payload)
-    metadata_only_fields={'source_ip','server_received_at','batch_timestamp','batch_entry_index','batch_id'}
-    meaningful_changes=[k for k in delta_payload.keys() if k not in metadata_only_fields and k not in['id','device_id']]
-    
-    if meaningful_changes or not previous_payload:
-     delta_payload.pop('id', None)
-     delta_payload.pop('timestamp', None)
-     delta_payload.pop('server_received_at',None)
-     delta_payload.pop('batch_id', None)
-     
-     if delta_payload:
-      result.append({
-          "delta_payload": delta_payload,
-          "data_type": entry["data_type"],
-          "is_offline": entry["is_offline"],
-          "data_timestamp_for_sort": entry["data_timestamp"]
-      })
-    previous_payload=copy.deepcopy(current_payload)
-    
-  result.sort(key=lambda x:x["data_timestamp_for_sort"],reverse=True)
-  for item in result:
-   del item["data_timestamp_for_sort"]
-   
-  total_records=len(result)
-  return result[offset:offset+limit],total_records
+      }
+      devices_data[device_id_key].append(entry)
+    except Exception as e:
+      print(f"Error processing row: {e}")
+      continue
+
+  result = []
+  for device_id_key, entries in devices_data.items():
+    previous_payload = {}
+    for entry in sorted(entries, key=lambda x: x["data_timestamp"]):
+      current_payload = entry["payload"]
+      delta_payload = calculate_delta_changes(current_payload, previous_payload)
+      metadata_only_fields = {'source_ip', 'server_received_at', 'batch_timestamp', 'batch_entry_index', 'batch_id'}
+      meaningful_changes = [k for k in delta_payload.keys() if k not in metadata_only_fields and k not in ['id', 'device_id']]
+
+      if meaningful_changes or not previous_payload:
+        delta_payload.pop('id', None)
+        delta_payload.pop('timestamp', None)
+        delta_payload.pop('server_received_at', None)
+        delta_payload.pop('batch_id', None)
+
+        if delta_payload:
+          result.append({
+            "delta_payload": delta_payload,
+            "data_type": entry["data_type"],
+            "is_offline": entry["is_offline"]
+          })
+      previous_payload = copy.deepcopy(current_payload)
+
+  return result, total_records
 
 async def get_data_gaps(device_id:str,days:int=30):
  async with pool.acquire() as conn:
@@ -127,3 +197,33 @@ async def get_data_gaps(device_id:str,days:int=30):
     gap_seconds=(current_time-next_time).total_seconds()
     if gap_seconds>300:gaps.append({"gap_start":next_time.isoformat(),"gap_end":current_time.isoformat(),"gap_duration_seconds":gap_seconds,"gap_duration_minutes":round(gap_seconds/60,2),"gap_duration_hours":round(gap_seconds/3600,2)})
   return gaps
+
+async def get_data_for_latest():
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT device_id, payload, received_at FROM latest_device_states ORDER BY received_at DESC")
+        result = []
+
+        for row in rows:
+            try:
+                device_id = row["device_id"]
+                received_at = row["received_at"]
+                payload = json.loads(row["payload"])
+
+                last_refresh_time = received_at.astimezone(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") if received_at else None
+
+                transformed = transform_device_data(payload)
+
+                transformed["last_refresh_time"] = last_refresh_time
+                if "barometric_data" in transformed:
+                    transformed.pop("barometric_data")
+
+                result.append({
+                    "device_id": device_id,
+                    "payload": transformed
+                })
+            except Exception as e:
+                print(f"[{datetime.datetime.now()}] Error processing device {row['device_id']}: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+
+        return result
