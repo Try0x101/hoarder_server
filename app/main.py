@@ -3,7 +3,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
 from app.responses import PrettyJSONResponse
-from app.db import init_db,get_latest_data
+from app.db import init_db,get_latest_data,get_database_size_str
 from app.routers import data,dashboard,history,telemetry,batch,export_import
 from timezonefinder import TimezoneFinder
 from app.cache import init_redis_pool
@@ -15,9 +15,9 @@ sio=socketio.AsyncServer(async_mode="asgi",cors_allowed_origins="*")
 socket_app=socketio.ASGIApp(sio,other_asgi_app=app)
 tf_sio=TimezoneFinder()
 active_connections={}
-
 @app.get("/")
 async def root_endpoints(request:Request):
+ db_size = await get_database_size_str()
  return{
   "server":"hoarder_server IoT Telemetry API",
   "status":"active",
@@ -60,7 +60,8 @@ async def root_endpoints(request:Request):
   "database":{
    "tables":["device_data","latest_device_states","timestamped_data","timestamped_data_archive"],
    "status":"connected",
-   "config":{"host":"localhost","database":"database","user":"admin"}
+   "config":{"host":"localhost","database":"database","user":"admin"},
+   "size": db_size
   },
   "features":[
    "Real-time telemetry collection",

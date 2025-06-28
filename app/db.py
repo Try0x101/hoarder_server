@@ -54,7 +54,7 @@ async def init_db():
                         ) PARTITION BY RANGE (data_timestamp);
                     """)
                     print(f"[{datetime.datetime.now()}] Partitioned table 'timestamped_data' created.")
-                
+
                 now = datetime.datetime.now(datetime.timezone.utc)
                 await create_partition_for_date(conn, now)
                 await create_partition_for_date(conn, now + datetime.timedelta(days=32))
@@ -79,21 +79,22 @@ async def upsert_latest_state(data: dict):
         async with pool.acquire() as conn:
             existing_payload_dict = {}
             existing_latest_state_row = await conn.fetchrow("SELECT payload FROM latest_device_states WHERE device_id=$1", device_id)
+            
             if existing_latest_state_row and existing_latest_state_row['payload']:
                 try:
                     existing_payload_dict = json.loads(existing_latest_state_row['payload'])
                 except (json.JSONDecodeError, TypeError):
                     print(f"[{datetime.datetime.now()}] ERROR: Could not parse existing payload for device {device_id}")
                     pass
+            
+            merged_data = deep_merge(existing_payload_dict, data)
 
-            merged_data = deep_merge(data, copy.deepcopy(existing_payload_dict))
             await conn.execute(
                 "INSERT INTO latest_device_states(device_id, payload, received_at) VALUES($1, $2, now()) ON CONFLICT(device_id) DO UPDATE SET payload=EXCLUDED.payload, received_at=EXCLUDED.received_at",
                 device_id, json.dumps(merged_data)
             )
-            print(f"[{datetime.datetime.now()}] Successfully upserted latest state for device {device_id}.")
+            print(f"[{datetime.datetime.now()}] Successfully merged and upserted latest state for device {device_id}.")
             await invalidate_cache(CACHE_KEY_LATEST_DATA)
-            # CACHE_INVALIDATION_MARKER
     except Exception as e:
         print(f"[{datetime.datetime.now()}] CRITICAL ERROR in upsert_latest_state: {str(e)}")
 
@@ -116,7 +117,7 @@ async def save_data(data:dict):
     print(f"[{datetime.datetime.now()}] Successfully saved historical data for device {device_id}")
    except Exception as e:
     print(f"[{datetime.datetime.now()}] ERROR in save_data (historical insert): {str(e)}")
-  
+
   await upsert_latest_state(data)
 
  except Exception as e:
@@ -179,7 +180,7 @@ def calculate_delta_changes(current_payload:Dict[str,Any],previous_payload:Dict[
 async def get_timestamped_history(device_id: str, days: int = 30, limit: int = 256, last_timestamp: Optional[str] = None):
     async with pool.acquire() as conn:
         time_threshold = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
-        
+
         count_query = "SELECT COUNT(*) FROM timestamped_data WHERE device_id=$1 AND data_timestamp >= $2"
         total_records = await conn.fetchval(count_query, device_id, time_threshold)
 
@@ -241,13 +242,13 @@ async def get_timestamped_history(device_id: str, days: int = 30, limit: int = 2
                             "is_offline": entry["is_offline"]
                         })
                 previous_payload = copy.deepcopy(current_payload)
-        
+
         next_cursor = None
         if rows and len(rows) == limit:
             last_row = rows[-1]
             next_cursor = last_row['data_timestamp'].isoformat()
 
-        result.reverse() # Sort from newest to oldest
+        result.reverse()
         return result, total_records, next_cursor
 
 async def get_data_gaps(device_id:str,days:int=30):
@@ -280,7 +281,7 @@ async def get_data_for_latest():
 
                 transformed["last_refresh_time"] = last_refresh_time
                 if "barometric_data" in transformed:
-                    transformed.pop("barometric_data")
+                    transformed.pop("barometric_data", None)
 
                 result.append({
                     "device_id": device_id,
@@ -292,3 +293,15 @@ async def get_data_for_latest():
                 print(traceback.format_exc())
 
         return result
+
+async def get_database_size_str() -> str:
+    try:
+        async with pool.acquire() as conn:
+            size_bytes = await conn.fetchval("SELECT pg_database_size(current_database())")
+            if size_bytes:
+                from app.utils import format_database_size
+                return format_database_size(size_bytes)
+            return "N/A"
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] ERROR getting database size: {str(e)}")
+        return "Error"
