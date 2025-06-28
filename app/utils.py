@@ -300,25 +300,6 @@ def safe_float(value):
  except (ValueError,TypeError):return None
 
 def transform_device_data(received_data):
-    timestamp_unix = received_data.get('timestamp')
-    transformed_timestamp = None
-    datetime_of_data_recorded = None
-    if timestamp_unix is not None:
-        try:
-            transformed_timestamp = datetime.datetime.fromtimestamp(timestamp_unix).isoformat()
-            datetime_of_data_recorded = datetime.datetime.fromtimestamp(timestamp_unix, tz=datetime.timezone.utc).strftime('%d.%m.%Y %H:%M:%S UTC')
-        except (TypeError, ValueError):
-            transformed_timestamp = None
-    elif 'ts' in received_data:
-        try:
-            ts_seconds = received_data['ts']
-            current_minute = int(datetime.datetime.now().timestamp()) // 60
-            full_timestamp = (current_minute * 60) + ts_seconds
-            transformed_timestamp = datetime.datetime.fromtimestamp(full_timestamp).isoformat()
-            datetime_of_data_recorded = datetime.datetime.fromtimestamp(full_timestamp, tz=datetime.timezone.utc).strftime('%d.%m.%Y %H:%M:%S UTC')
-        except (TypeError, ValueError):
-            transformed_timestamp = None
-
     location_date, location_time, location_timezone, location_tz = None, None, None, None
     lat, lon = received_data.get('lat'), received_data.get('lon')
     if lat is not None and lon is not None:
@@ -453,8 +434,6 @@ def transform_device_data(received_data):
         'network_download_capacity': f"{safe_int(received_data.get('dn'))} Mbps" if 'dn' in received_data and received_data.get('dn') is not None else None,
         'network_upload_capacity': f"{safe_int(received_data.get('up'))} Mbps" if 'up' in received_data and received_data.get('up') is not None else None,
         'barometric_data': barometric_data,
-        'timestamp': transformed_timestamp,
-        'datetime_of_data_recorded': datetime_of_data_recorded,
         'weather_temperature': f"{safe_int(received_data.get('weather_temp'))}°C" if 'weather_temp' in received_data and received_data.get('weather_temp') is not None else None,
         'weather_description': WEATHER_CODE_DESCRIPTIONS.get(received_data.get('weather_code'), "Неизвестно"),
         'weather_humidity': f"{safe_int(received_data.get('weather_humidity'))}%" if 'weather_humidity' in received_data and received_data.get('weather_humidity') is not None else None,

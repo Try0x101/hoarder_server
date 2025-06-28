@@ -60,7 +60,7 @@ async def process_delta_batch(deltas: list, source_ip: str):
         conn = await asyncpg.connect(**DB_CONFIG)
         device_states = {}
         batch_id = f"batch_delta_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-        batch_receive_time = datetime.datetime.now()
+        batch_receive_time = datetime.datetime.now(datetime.timezone.utc)
 
         for delta in deltas:
             device_id = delta.get('id')
@@ -74,28 +74,53 @@ async def process_delta_batch(deltas: list, source_ip: str):
                 else:
                     device_states[device_id] = {}
             
-            current_state = device_states[device_id]
-            reconstructed_payload = deep_merge(delta, copy.deepcopy(current_state))
+            last_enriched_state = device_states[device_id]
+
+            server_keys_to_remove = ['source_ip', 'server_received_at', 'batch_id', 'batch_timestamp', 'timestamp', 'data_type']
+            clean_state = {
+                k: v for k, v in last_enriched_state.items() 
+                if not k.startswith(('weather_', 'marine_')) and k not in server_keys_to_remove
+            }
+
+            reconstructed_payload = deep_merge(delta, copy.deepcopy(clean_state))
             
-            if 'ts' in delta:
-                ts_seconds = delta['ts']
-                current_minute = int(batch_receive_time.timestamp()) // 60
-                full_timestamp = (current_minute * 60) + ts_seconds
-                reconstructed_payload['timestamp'] = full_timestamp
-            
-            reconstructed_payload['source_ip'] = source_ip
-            reconstructed_payload['batch_id'] = batch_id
+            data_timestamp = batch_receive_time
+            if 'ts' in delta and delta['ts'] is not None:
+                try:
+                    ts_seconds = int(delta['ts'])
+                    quarter_start_month = (batch_receive_time.month - 1) // 3 * 3 + 1
+                    quarter_start_date = datetime.datetime(batch_receive_time.year, quarter_start_month, 1, tzinfo=datetime.timezone.utc)
+                    full_timestamp_obj = quarter_start_date + datetime.timedelta(seconds=ts_seconds)
+                    data_timestamp = full_timestamp_obj
+                    reconstructed_payload['timestamp'] = full_timestamp_obj.timestamp()
+                except (ValueError, TypeError):
+                    pass
+
+            payload_for_history = copy.deepcopy(reconstructed_payload)
+            payload_for_history['batch_id'] = batch_id
+            payload_for_history['source_ip'] = source_ip
+
+            await conn.execute(
+                "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6)",
+                device_id, json.dumps(payload_for_history), data_timestamp, 'delta', True, batch_id
+            )
             
             if 'lat' in reconstructed_payload and 'lon' in reconstructed_payload:
-                enriched_payload = await enrich_with_weather_data(reconstructed_payload)
+                enriched_payload_for_latest_state = await enrich_with_weather_data(reconstructed_payload)
             else:
-                enriched_payload = reconstructed_payload
-
-            await save_data(enriched_payload)
-            device_states[device_id] = enriched_payload
+                enriched_payload_for_latest_state = reconstructed_payload
+            
+            await conn.execute(
+                "INSERT INTO latest_device_states(device_id, payload, received_at) VALUES($1, $2, now()) ON CONFLICT(device_id) DO UPDATE SET payload = EXCLUDED.payload, received_at = EXCLUDED.received_at",
+                device_id, json.dumps(enriched_payload_for_latest_state)
+            )
+            
+            device_states[device_id] = enriched_payload_for_latest_state
 
     except Exception as e:
         print(f"[{datetime.datetime.now()}] ERROR processing delta batch: {str(e)}")
+        import traceback
+        print(f"[{datetime.datetime.now()}] {traceback.format_exc()}")
     finally:
         if conn:
             await conn.close()
