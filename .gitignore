@@ -1,3 +1,4 @@
+# Python
 venv/
 .env
 __pycache__/
@@ -6,16 +7,41 @@ __pycache__/
 .pytest_cache/
 .coverage
 .cache
+
+# Build artifacts
 build/
 dist/
 *.egg-info
+
+# IDE and editor files
 .idea/
 .vscode/
-*.log
 *.swp
 *.swo
+
+# Log and data files
+*.log
+*.sql
+*.db
+*.bak
+*.bak.*
+*.latest_backup
 
 # Backup files
 *.bak
 *.bak.*
 *.latest_backup
+
+# Backup files
+*.bak
+*.bak.*
+
+# Documentation
+README.md
+
+# Backup files
+*.bak
+*.bak.*
+
+# Documentation
+README.md
