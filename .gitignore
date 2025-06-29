@@ -1,11 +1,21 @@
 venv/
+.env
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.env
-.DS_Store
-/tmp/
-*.log
+*.py,cover
 .pytest_cache/
 .coverage
+.cache
+build/
+dist/
+*.egg-info
+.idea/
+.vscode/
+*.log
+*.swp
+*.swo
+
+# Backup files
+*.bak
+*.bak.*
+*.latest_backup
