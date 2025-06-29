@@ -1,37 +1,10 @@
 import json,datetime,copy
 from fastapi import APIRouter,Request,BackgroundTasks
 from app.responses import PrettyJSONResponse
-from app.utils import decode_raw_data,enrich_with_weather_data,enrich_with_wifi_data,enrich_with_cell_data,enrich_with_ais_data
+from app.utils import decode_raw_data,enrich_with_weather_data
 from app.db import save_data,save_timestamped_data,upsert_latest_state
 
 router=APIRouter()
-
-async def enrich_and_update_ais_state(data: dict):
-    """Background task to enrich data with AIS vessel details."""
-    try:
-        enriched_payload = await enrich_with_ais_data(data)
-        if 'nearby_vessels' in enriched_payload:
-            await upsert_latest_state(enriched_payload)
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] ERROR in background AIS enrichment task: {e}")
-
-async def enrich_and_update_cell_state(data: dict):
-    """Background task to enrich data with Wigle cell tower details."""
-    try:
-        enriched_payload = await enrich_with_cell_data(data)
-        if any(k.startswith('cell_trilaterated') for k in enriched_payload.keys()):
-            await upsert_latest_state(enriched_payload)
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] ERROR in background cell enrichment task: {e}")
-
-async def enrich_and_update_wifi_state(data: dict):
-    """Background task to enrich data with Wigle Wi-Fi details."""
-    try:
-        enriched_payload = await enrich_with_wifi_data(data)
-        if any(k.startswith('wifi_') for k in enriched_payload.keys()):
-            await upsert_latest_state(enriched_payload)
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] ERROR in background wifi enrichment task: {e}")
 
 async def enrich_and_update_state(data: dict):
     """Background task to enrich data with weather and update the latest state."""
@@ -62,12 +35,6 @@ async def receive_telemetry(request:Request,background_tasks:BackgroundTasks):
 
     if data.get("lat") and data.get("lon"):
         background_tasks.add_task(enrich_and_update_state, data)
-        background_tasks.add_task(enrich_and_update_ais_state, data)
-
-    if str(data.get("bssid")) not in ['0', '', 'error', 'None']:
-        background_tasks.add_task(enrich_and_update_wifi_state, data)
-    elif all(data.get(k) for k in ['ci', 'mcc', 'mnc', 'tac']):
-        background_tasks.add_task(enrich_and_update_cell_state, data)
 
     return {
         "status":"received",
