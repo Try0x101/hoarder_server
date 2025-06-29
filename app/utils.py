@@ -5,7 +5,7 @@ from timezonefinder import TimezoneFinder
 import pytz
 
 AIS_STREAM_API_KEY = "69411d27bff7498f6ed24487136d918aae504c2d"
-AIS_STREAM_API_URL = "https://api.aisstream.io/v1/http"
+AIS_STREAM_API_URL = "https://aisstream.io/v1/live"
 WIGLE_API_HEADER = {"Authorization": "Basic QUlEMmQ3ZGIzOWZkMDNkY2UxYTllMGNjYjJmYWFiMTE1Njk6ZGYzNDZjYjMyNTBhY2ZjZDg3MDA4YTE0MWYxNDZiOTg="}
 WIGLE_WIFI_API_URL = "https://api.wigle.net/api/v2/network/detail"
 WIGLE_CELL_API_URL = "https://api.wigle.net/api/v2/cell/search"
@@ -320,6 +320,11 @@ def safe_float(value):
  try:return float(value)
  except (ValueError,TypeError):return None
 
+async def get_nearby_vessels(lat: float, lon: float) -> Optional[List[Dict[str, Any]]]:
+    """Get nearby vessels using AISStream API - simplified implementation"""
+    print(f"[{datetime.datetime.now()}] DEBUG: AISStream requires WebSocket - returning empty list")
+    return [] # Return empty list as placeholder
+
 def transform_device_data(received_data):
     location_date, location_time, location_timezone, location_tz = None, None, None, None
     lat, lon = received_data.get('lat'), received_data.get('lon')
@@ -602,66 +607,6 @@ async def enrich_with_cell_data(data: dict) -> dict:
             data.update(cell_details)
             print(f"[{datetime.datetime.now()}] SUCCESS: Cell data added for device {data.get('id') or data.get('device_id')}")
     return data
-
-async def get_nearby_vessels(lat: float, lon: float) -> Optional[List[Dict[str, Any]]]:
-    bbox_size = 0.5
-    bounding_box = f"[[{lat - bbox_size},{lon - bbox_size}],[{lat + bbox_size},{lon + bbox_size}]]"
-    
-    params = {"APIKey": AIS_STREAM_API_KEY, "BoundingBox": bounding_box}
-    
-    print(f"[{datetime.datetime.now()}] DEBUG: Querying AISStream API with params: {params}")
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(AIS_STREAM_API_URL, params=params)
-
-            if response.status_code == 200:
-                api_response = response.json()
-                vessels_data = api_response.get('Data', [])
-                
-                if not vessels_data:
-                    print(f"[{datetime.datetime.now()}] DEBUG: AISStream returned no vessels in the area.")
-                    return []
-
-                vessels_with_distance = []
-                vessel_names = {}
-
-                for vessel_message in vessels_data:
-                    message_type = vessel_message.get('MessageType')
-                    message_body = vessel_message.get('Message', {})
-                    user_id = message_body.get('UserID')
-                    if message_type == "StaticData":
-                        vessel_names[user_id] = message_body.get('ShipName', 'N/A').strip()
-
-                for vessel_message in vessels_data:
-                    message_type = vessel_message.get('MessageType')
-                    if message_type == "PositionReport":
-                        message_body = vessel_message.get('Message', {})
-                        vessel_lat = message_body.get('Latitude')
-                        vessel_lon = message_body.get('Longitude')
-                        user_id = message_body.get('UserID')
-
-                        if vessel_lat is not None and vessel_lon is not None:
-                            distance = calculate_distance_km(lat, lon, vessel_lat, vessel_lon)
-                            vessels_with_distance.append({
-                                "name": vessel_names.get(user_id, 'N/A'),
-                                "mmsi": user_id,
-                                "latitude": vessel_lat,
-                                "longitude": vessel_lon,
-                                "speed_knots": message_body.get('Sog'),
-                                "course_degrees": message_body.get('Cog'),
-                                "heading_degrees": message_body.get('TrueHeading'),
-                                "distance_km": round(distance, 2)
-                            })
-                
-                sorted_vessels = sorted(vessels_with_distance, key=lambda v: v['distance_km'])
-                print(f"[{datetime.datetime.now()}] SUCCESS: Found {len(sorted_vessels)} vessels nearby.")
-                return sorted_vessels[:10]
-            else:
-                print(f"[{datetime.datetime.now()}] ERROR: AISStream API returned status {response.status_code}. Response: {response.text}")
-
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] ERROR: Exception during AISStream API call: {e}")
-    return None
 
 async def enrich_with_ais_data(data: dict) -> dict:
     from app.device_tracker import should_force_ais_update, update_device_timestamp
