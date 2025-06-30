@@ -30,42 +30,31 @@ dist/
 # Backup files
 *.bak
 *.bak.*
-*.latest_backup
 
-# Backup files
-*.bak
-*.bak.*
-
-# Documentation
-README.md
-
-# Backup files
-*.bak
-*.bak.*
-
-# Documentation
-README.md
-# Backup files
-*.bak
-*.bak.*
-*.latest_backup
-
-# Redis persistence
-dump.rdb
-appendonly.aof
+# Temporary files
+/tmp/*
+.DS_Store
 
 # Cache directories
-/tmp/enhanced_cache/
 /tmp/hoarder_precompute/
+/tmp/enhanced_cache/
 /tmp/hoarder_exports/
 /tmp/hoarder_imports/
 
-# PostgreSQL config backups
-postgresql.conf.bak*
-
-# Performance logs
-/var/log/postgres_monitor/
-/var/log/app_performance/
-
+# Documentation
+README.md
+# Backup files
+*.bak
+*.bak.*
+# Documentation
+README.md
+# Backup files
+*.bak
+*.bak.*
+# Documentation
+README.md
+# Backup files
+*.bak
+*.bak.*
 # Documentation
 README.md
