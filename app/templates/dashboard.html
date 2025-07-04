@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        .card { padding: 1rem; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 1rem; }
+        .device-id { font-weight: bold; }
+        .nav { margin-bottom: 1rem; }
+        .nav a { margin-right: 1rem; text-decoration: none; color: #007bff; }
+        .nav a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>Device Dashboard</h1>
+    <div class="nav">
+        <a href="/dashboard/">Dashboard</a>
+        <a href="/data/history">Device History</a>
+        <a href="/dashboard/export">Export Database</a>
+        <a href="/dashboard/import">Import Database</a>
+    </div>
+    {% for entry in data %}
+        <div class="card">
+            <div class="device-id">ID: {{ entry.device_id }}</div>
+            <div class="timestamp">Time: {{ entry.time }}</div>
+            <pre>{{ entry.payload | tojson(indent=2) }}</pre>
+        </div>
+    {% endfor %}
+</body>
+</html>

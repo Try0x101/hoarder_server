@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Import Database</title>
+    <style>
+        body { font-family: sans-serif; margin: 2rem; }
+        .card { padding: 1rem; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 1rem; }
+        .button { padding: 0.5rem 1rem; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .button:hover { background-color: #0056b3; }
+        .info { margin: 1rem 0; }
+        #status { display: none; }
+        .progress { width: 100%; height: 20px; background-color: #f3f3f3; border-radius: 5px; margin: 10px 0; }
+        .progress-bar { height: 100%; width: 0; background-color: #4caf50; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Database Import</h1>
+    <div class="card">
+        <p>Import database from a JSON file.</p>
+        <form id="importForm" enctype="multipart/form-data">
+            <div>
+                <label>Import File:</label>
+                <input type="file" id="importFile" accept=".json" required>
+            </div>
+            <div>
+                <label>
+                    <input type="checkbox" id="merge" checked>
+                    Merge with existing data (if unchecked, will replace all data)
+                </label>
+            </div>
+            <div class="info">
+                <button type="submit" class="button" id="importBtn">Start Import</button>
+            </div>
+        </form>
+        <div id="status">
+            <h3>Import Status</h3>
+            <div id="statusMessage"></div>
+            <div class="progress">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+        </div>
+    </div>
+    <div class="card">
+        <a href="/dashboard/" class="button">Back to Dashboard</a>
+    </div>
+    <script>
+        document.getElementById('importForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            const fileInput = document.getElementById('importFile');
+            const merge = document.getElementById('merge').checked;
+            
+            if (fileInput.files.length === 0) {
+                alert('Please select a file to import');
+                return;
+            }
+            
+            formData.append('file', fileInput.files[0]);
+            formData.append('merge', merge);
+            
+            startImport(formData);
+        });
+        function startImport(formData) {
+            document.getElementById('importBtn').disabled = true;
+            document.getElementById('status').style.display = 'block';
+            document.getElementById('statusMessage').textContent = 'Starting import...';
+            
+            fetch('/import/database', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'started') {
+                        checkImportStatus(data.import_id);
+                    } else {
+                        document.getElementById('statusMessage').textContent = 'Error: ' + data.message;
+                        document.getElementById('importBtn').disabled = false;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('statusMessage').textContent = 'Error: ' + error;
+                    document.getElementById('importBtn').disabled = false;
+                });
+        }
+        function checkImportStatus(importId) {
+            fetch('/import/status/' + importId)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('statusMessage').textContent = data.message;
+                    
+                    if (data.progress) {
+                        document.getElementById('progressBar').style.width = data.progress + '%';
+                    }
+                    
+                    if (data.status === 'completed') {
+                        document.getElementById('progressBar').style.width = '100%';
+                    } else if (data.status === 'in_progress' || data.status === 'started') {
+                        setTimeout(() => checkImportStatus(importId), 2000);
+                    } else if (data.status === 'failed') {
+                        document.getElementById('statusMessage').textContent = 'Error: ' + (data.error || 'Unknown error');
+                        document.getElementById('importBtn').disabled = false;
+                    } else {
+                        document.getElementById('exportBtn').disabled = false;
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('statusMessage').textContent = 'Error checking status: ' + error;
+                    document.getElementById('importBtn').disabled = false;
+                });
+        }
+    </script>
+</body>
+</html>
