@@ -17,6 +17,15 @@ def normalize_numeric_string(value_str):
     except (ValueError, OverflowError):
         return value_str
 
+def is_ip_address(value_str):
+    parts = value_str.split('.')
+    if len(parts) == 4:
+        try:
+            return all(0 <= int(part) <= 255 for part in parts)
+        except ValueError:
+            return False
+    return False
+
 def sanitize_payload(data: any) -> any:
     if isinstance(data, dict):
         return {k: sanitize_payload(v) for k, v in data.items()}
@@ -39,6 +48,9 @@ def sanitize_payload(data: any) -> any:
             if stripped.startswith(quote) and stripped.endswith(quote) and len(stripped) > 1:
                 stripped = stripped[1:-1].strip()
                 break
+        
+        if is_ip_address(stripped):
+            return stripped
         
         if re.match(r'^[\-\+]?\d*\.?\d+([eE][\-\+]?\d+)?$', stripped):
             try:

@@ -66,7 +66,7 @@ def safe_device_id_extraction(data: dict) -> Optional[str]:
 
 async def enrich_with_weather_data(data: dict) -> dict:
     from app.device_tracker import should_force_weather_update, cleanup_old_device_data
-    from .client import get_weather_data
+    from app.services.weather.coordinator import get_weather_data
 
     print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Starting weather enrichment")
     

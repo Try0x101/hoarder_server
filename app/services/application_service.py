@@ -2,10 +2,10 @@ import socketio
 import asyncio
 from app.core.application import create_app
 from app.core.startup import startup_handler, shutdown_handler, periodic_maintenance_task
-from app.websocket.manager import ConnectionManager
-from app.websocket.timezone_manager import SharedTimezoneManager
+from app.realtime.websocket.connection_manager import ConnectionManager
+from app.realtime.timezone.manager import SharedTimezoneManager
 from app.monitoring.system_monitor import SystemMonitor
-from app.monitoring.memory_manager import GlobalMemoryManager
+from app.shared.memory.manager import GlobalMemoryManager
 from app.middleware.rate_limiter import rate_limit_middleware
 from .websocket_handlers import setup_websocket_events
 from .api_endpoints import setup_api_endpoints

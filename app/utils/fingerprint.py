@@ -20,7 +20,7 @@ def normalize_ip_address(ip_value):
         return ip_clean
     
     if ':' in ip_clean and len(ip_clean) > 7:
-        return ip_clean[:15]
+        return ip_clean[:45]
     
     return f"parsed_{hashlib.md5(ip_str.encode()).hexdigest()[:8]}"
 

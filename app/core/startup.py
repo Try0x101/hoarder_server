@@ -3,6 +3,7 @@ import datetime
 from app.db import init_db
 from app.cache import init_redis_pool
 from app.monitoring.system_monitor import SystemMonitor
+from app.realtime.websocket.cleanup import cleanup_stale_connections
 
 async def startup_handler(system_monitor: SystemMonitor):
     print(f"[{datetime.datetime.now()}] Starting hoarder_server v3.3.0 with memory management...")
@@ -38,7 +39,7 @@ async def shutdown_handler(sio, connection_manager):
 async def periodic_maintenance_task(sio, connection_manager, shared_timezone_manager, system_monitor):
     while True:
         try:
-            await connection_manager.cleanup_stale_connections(sio)
+            await cleanup_stale_connections(connection_manager, sio)
             await shared_timezone_manager.broadcast_timezone_updates(sio)
             
             import psutil

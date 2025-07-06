@@ -1,8 +1,8 @@
 import datetime
-from app.websocket.manager import ConnectionManager
-from app.websocket.timezone_manager import SharedTimezoneManager
+from app.realtime.websocket.connection_manager import ConnectionManager
+from app.realtime.timezone.manager import SharedTimezoneManager
 from app.db import get_raw_latest_payload_for_device
-from app.transforms.device import safe_float
+from app.transforms import safe_float
 
 def setup_websocket_events(sio, connection_manager: ConnectionManager, shared_timezone_manager: SharedTimezoneManager):
     
