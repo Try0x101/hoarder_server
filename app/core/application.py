@@ -4,7 +4,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from app.responses import PrettyJSONResponse
-from app.routers import data, dashboard, history, telemetry, batch, export_import
+from app.routers import data, dashboard, history, telemetry, batch
+from app.export_import import router as export_import_router
 
 async def generic_exception_handler(request: Request, exc: Exception):
     print("="*80)
@@ -44,4 +45,4 @@ def _setup_routers(app: FastAPI):
     app.include_router(telemetry.router)
     app.include_router(history.router)
     app.include_router(batch.router)
-    app.include_router(export_import.router)
+    app.include_router(export_import_router)

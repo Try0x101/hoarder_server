@@ -23,12 +23,11 @@ async def startup_handler(system_monitor: SystemMonitor):
     
     print(f"[{datetime.datetime.now()}] Server ready with memory management and shared timezone computation")
 
-async def shutdown_handler(connection_manager):
+async def shutdown_handler(sio, connection_manager):
     print(f"[{datetime.datetime.now()}] Shutting down hoarder_server...")
     
     disconnect_tasks = []
     for sid in list(connection_manager.connections.keys()):
-        from app.main import sio
         disconnect_tasks.append(sio.disconnect(sid))
         
     if disconnect_tasks:
@@ -36,10 +35,9 @@ async def shutdown_handler(connection_manager):
     
     print(f"[{datetime.datetime.now()}] Shutdown complete")
 
-async def periodic_maintenance_task(connection_manager, shared_timezone_manager, system_monitor):
+async def periodic_maintenance_task(sio, connection_manager, shared_timezone_manager, system_monitor):
     while True:
         try:
-            from app.main import sio
             await connection_manager.cleanup_stale_connections(sio)
             await shared_timezone_manager.broadcast_timezone_updates(sio)
             

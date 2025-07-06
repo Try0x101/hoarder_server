@@ -5,7 +5,7 @@ import asyncpg
 import gc
 from typing import AsyncGenerator
 from app.weather import enrich_with_weather_data
-from app.db import DB_CONFIG
+from app.database import DB_CONFIG
 from .memory_manager import BatchMemoryManager
 
 MAX_DEVICE_STATES_CACHE = 30

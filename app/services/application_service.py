@@ -20,7 +20,6 @@ def create_socket_app():
     connection_manager = ConnectionManager()
     shared_timezone_manager = SharedTimezoneManager()
     system_monitor = SystemMonitor()
-    global_memory = GlobalMemoryManager()
     
     setup_monitoring_middleware(app, system_monitor)
     setup_api_endpoints(app, system_monitor, connection_manager)
@@ -58,8 +57,8 @@ def setup_lifecycle_events(app, sio, connection_manager, shared_timezone_manager
     @app.on_event("startup")
     async def startup():
         await startup_handler(system_monitor)
-        asyncio.create_task(periodic_maintenance_task(connection_manager, shared_timezone_manager, system_monitor))
+        asyncio.create_task(periodic_maintenance_task(sio, connection_manager, shared_timezone_manager, system_monitor))
 
     @app.on_event("shutdown")
     async def shutdown():
-        await shutdown_handler(connection_manager)
+        await shutdown_handler(sio, connection_manager)

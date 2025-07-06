@@ -2,72 +2,11 @@ import os
 import datetime
 import asyncio
 import time
-from .disk_monitor import get_disk_usage
 
-CACHE_DIR = "/tmp/weather_cache_optimized"
-REQUEST_LOG_FILE = "/tmp/weather_requests.log"
-EMERGENCY_CLEANUP_LOG = "/tmp/weather_emergency_cleanup.log"
-MAX_CACHE_SIZE_MB = 50
-MAX_CACHE_FILES = 1000
-WEATHER_CACHE_DURATION = 3600
-LOG_ROTATION_SIZE_MB = 2
+from .constants import CACHE_DIR, MAX_CACHE_SIZE_MB, MAX_CACHE_FILES, WEATHER_CACHE_DURATION
 
 _last_cleanup = 0
 _cleanup_lock = asyncio.Lock()
-
-async def cleanup_old_request_logs():
-    try:
-        await rotate_log_file(REQUEST_LOG_FILE, LOG_ROTATION_SIZE_MB)
-        
-        if os.path.exists(EMERGENCY_CLEANUP_LOG):
-            from .statistics import get_directory_size_mb
-            log_size_mb = await get_directory_size_mb(EMERGENCY_CLEANUP_LOG)
-            if log_size_mb > 5:
-                await rotate_log_file(EMERGENCY_CLEANUP_LOG, 5)
-                
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] Log cleanup error: {e}")
-
-async def rotate_log_file(log_path: str, max_size_mb: float):
-    try:
-        if not os.path.exists(log_path):
-            return
-        
-        def _rotate_log():
-            size_mb = os.path.getsize(log_path) / (1024 * 1024)
-            if size_mb <= max_size_mb:
-                return False
-                
-            backup_path = f"{log_path}.{int(time.time())}"
-            
-            cutoff_date = datetime.date.today() - datetime.timedelta(days=1)
-            recent_lines = []
-            
-            with open(log_path, 'r') as f:
-                for line in f:
-                    try:
-                        timestamp_str = line.strip()
-                        request_time = datetime.datetime.fromisoformat(timestamp_str)
-                        if request_time.date() >= cutoff_date:
-                            recent_lines.append(line)
-                    except:
-                        continue
-            
-            os.rename(log_path, backup_path)
-            
-            with open(log_path, 'w') as f:
-                f.writelines(recent_lines[-1000:])
-            
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
-            return True
-        
-        rotated = await asyncio.to_thread(_rotate_log)
-        if rotated:
-            print(f"[{datetime.datetime.now()}] Log rotated: {log_path}")
-            
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] Log rotation failed for {log_path}: {e}")
 
 async def intelligent_cache_cleanup():
     global _last_cleanup
@@ -77,96 +16,65 @@ async def intelligent_cache_cleanup():
             if not os.path.exists(CACHE_DIR):
                 return {'removed': 0, 'size_freed_mb': 0}
             
-            cache_files, total_cache_size = await _analyze_cache_files()
-            total_cache_size_mb = total_cache_size / (1024 * 1024)
-            
-            files_to_remove = await _determine_files_to_remove(cache_files, total_cache_size_mb)
+            cache_files, total_size = await _analyze_cache_files()
+            files_to_remove = await _determine_files_to_remove(cache_files, total_size)
             removed_count, size_freed = await _cleanup_files(files_to_remove)
             
             _last_cleanup = time.time()
             
-            result = {
-                'removed': removed_count,
-                'size_freed_mb': size_freed / (1024 * 1024),
-                'remaining_files': len(cache_files) - removed_count,
-                'remaining_size_mb': (total_cache_size - size_freed) / (1024 * 1024)
-            }
-            
             if removed_count > 0:
-                print(f"[{datetime.datetime.now()}] Cache cleanup: {result}")
+                print(f"[{datetime.datetime.now()}] Cache cleanup: removed {removed_count} files, freed {size_freed / (1024*1024):.2f}MB")
             
-            return result
+            return {'removed': removed_count, 'size_freed_mb': size_freed / (1024*1024)}
             
         except Exception as e:
             print(f"[{datetime.datetime.now()}] Cache cleanup failed: {e}")
             return {'removed': 0, 'size_freed_mb': 0}
 
 async def _analyze_cache_files():
-    def _scan_files():
-        current_time = time.time()
-        cache_files = []
-        total_cache_size = 0
-        
-        for cache_file in os.listdir(CACHE_DIR):
-            if not cache_file.endswith('.json'):
-                continue
-                
-            cache_path = os.path.join(CACHE_DIR, cache_file)
+    def _scan():
+        files, total_size = [], 0
+        now = time.time()
+        for f_name in os.listdir(CACHE_DIR):
+            if not f_name.endswith('.json'): continue
+            path = os.path.join(CACHE_DIR, f_name)
             try:
-                stat = os.stat(cache_path)
-                file_age = current_time - stat.st_mtime
-                file_size = stat.st_size
-                total_cache_size += file_size
-                
-                cache_files.append({
-                    'path': cache_path,
-                    'age': file_age,
-                    'size': file_size,
-                    'priority': file_age + (file_size / 1024)
-                })
-            except:
-                try:
-                    os.remove(cache_path)
-                except:
-                    pass
+                stat = os.stat(path)
+                total_size += stat.st_size
+                files.append({'path': path, 'age': now - stat.st_mtime, 'size': stat.st_size})
+            except OSError:
                 continue
-        
-        return cache_files, total_cache_size
-    
-    return await asyncio.to_thread(_scan_files)
+        return files, total_size
+    return await asyncio.to_thread(_scan)
 
-async def _determine_files_to_remove(cache_files, total_cache_size_mb):
-    cache_files.sort(key=lambda x: x['priority'], reverse=True)
+async def _determine_files_to_remove(cache_files, total_size_mb):
+    cache_files.sort(key=lambda x: x['age'], reverse=True)
     
-    target_removal_count = 0
-    if total_cache_size_mb > MAX_CACHE_SIZE_MB:
-        target_removal_count = len(cache_files) // 3
-    elif len(cache_files) > MAX_CACHE_FILES:
-        target_removal_count = len(cache_files) - MAX_CACHE_FILES
+    to_remove = []
+    size_to_free = (total_size_mb - MAX_CACHE_SIZE_MB) * 1024 * 1024
+    files_over_limit = len(cache_files) - MAX_CACHE_FILES
     
-    files_to_remove = []
-    for cache_info in cache_files:
-        if cache_info['age'] > WEATHER_CACHE_DURATION or len(files_to_remove) < target_removal_count:
-            files_to_remove.append(cache_info)
+    freed_size = 0
+    for i, f_info in enumerate(cache_files):
+        is_old = f_info['age'] > WEATHER_CACHE_DURATION
+        is_over_count = i < files_over_limit
+        is_over_size = freed_size < size_to_free
+        
+        if is_old or is_over_count or is_over_size:
+            to_remove.append(f_info)
+            freed_size += f_info['size']
             
-        if len(files_to_remove) >= target_removal_count and total_cache_size_mb - (sum(f['size'] for f in files_to_remove) / (1024 * 1024)) <= MAX_CACHE_SIZE_MB:
-            break
-    
-    return files_to_remove
+    return to_remove
 
 async def _cleanup_files(files_to_remove):
-    def _remove_files():
-        removed_count = 0
-        size_freed = 0
-        
-        for cache_info in files_to_remove:
+    def _remove():
+        removed, freed = 0, 0
+        for f_info in files_to_remove:
             try:
-                os.remove(cache_info['path'])
-                removed_count += 1
-                size_freed += cache_info['size']
-            except:
+                os.remove(f_info['path'])
+                removed += 1
+                freed += f_info['size']
+            except OSError:
                 continue
-                
-        return removed_count, size_freed
-    
-    return await asyncio.to_thread(_remove_files)
+        return removed, freed
+    return await asyncio.to_thread(_remove)
