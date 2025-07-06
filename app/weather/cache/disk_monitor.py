@@ -4,6 +4,7 @@ import datetime
 import asyncio
 from typing import Dict
 
+CACHE_DIR = "/tmp/weather_cache_optimized"
 EMERGENCY_DISK_THRESHOLD_MB = 500
 CRITICAL_DISK_THRESHOLD_MB = 200
 
@@ -65,6 +66,35 @@ async def get_disk_usage() -> Dict[str, float]:
         print(f"[{datetime.datetime.now()}] Error getting disk usage: {e}")
         return {'total_mb': 0, 'available_mb': 0, 'used_mb': 0, 'usage_percent': 0}
 
+async def _basic_cache_cleanup():
+    try:
+        def _remove_old_files():
+            if not os.path.exists(CACHE_DIR):
+                return 0, 0
+            
+            files_removed = 0
+            space_freed = 0
+            current_time = time.time()
+            
+            for cache_file in os.listdir(CACHE_DIR):
+                if cache_file.endswith('.json'):
+                    file_path = os.path.join(CACHE_DIR, cache_file)
+                    try:
+                        file_age = current_time - os.path.getmtime(file_path)
+                        if file_age > 3600:
+                            size = os.path.getsize(file_path)
+                            os.remove(file_path)
+                            files_removed += 1
+                            space_freed += size
+                    except:
+                        continue
+            
+            return files_removed, space_freed
+        
+        return await asyncio.to_thread(_remove_old_files)
+    except Exception:
+        return 0, 0
+
 async def monitor_disk_usage():
     global _last_disk_check, _disk_stats
     
@@ -79,20 +109,16 @@ async def monitor_disk_usage():
     
     if _disk_stats['available_mb'] < CRITICAL_DISK_THRESHOLD_MB:
         await emergency_disk_cleanup()
-    elif _disk_stats['available_mb'] < EMERGENCY_DISK_THRESHOLD_MB:
-        from .cleanup import intelligent_cache_cleanup
-        await intelligent_cache_cleanup()
     
     return _disk_stats
 
 async def emergency_disk_cleanup():
     global _emergency_mode
-    from .cleanup import _cleanup_cache_files
     
     try:
         _emergency_mode = True
-        files_removed, space_freed = await _cleanup_cache_files()
-        print(f"[{datetime.datetime.now()}] EMERGENCY: Disk cleanup completed - removed {files_removed} files, freed {space_freed / (1024 * 1024):.1f}MB")
+        files_removed, space_freed = await _basic_cache_cleanup()
+        print(f"[{datetime.datetime.now()}] EMERGENCY: Cleanup completed - removed {files_removed} files")
     except Exception as e:
         print(f"[{datetime.datetime.now()}] CRITICAL: Emergency cleanup failed: {e}")
     finally:

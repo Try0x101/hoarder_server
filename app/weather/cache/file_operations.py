@@ -1,0 +1,134 @@
+import os
+import json
+import hashlib
+import datetime
+import asyncio
+import aiofiles
+import time
+from typing import Optional, Dict, Any, Tuple, List
+from app.transforms.geo import calculate_distance_km
+from .disk_monitor import monitor_disk_usage, is_emergency_mode
+
+CACHE_DIR = "/tmp/weather_cache_optimized"
+WEATHER_CACHE_DURATION = 3600
+DISTANCE_THRESHOLD_KM = 1.0
+MAX_CACHE_FILES = 1000
+
+WEATHER_KEYS = {
+    'weather_temp', 'weather_humidity', 'weather_apparent_temp',
+    'precipitation', 'weather_code', 'pressure_msl', 'cloud_cover',
+    'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m',
+    'weather_observation_time', 'marine_wave_height', 'marine_wave_direction',
+    'marine_wave_period', 'marine_swell_wave_height', 'marine_swell_wave_direction',
+    'marine_swell_wave_period'
+}
+
+_file_list_cache: Optional[List[str]] = None
+_file_list_cache_time: float = 0
+_file_list_lock = asyncio.Lock()
+
+def round_coordinates(lat: float, lon: float, precision: int = 3) -> Tuple[float, float]:
+    return round(lat, precision), round(lon, precision)
+
+def ensure_cache_dir():
+    if not os.path.exists(CACHE_DIR):
+        os.makedirs(CACHE_DIR, exist_ok=True)
+
+def get_cache_key(lat: float, lon: float) -> str:
+    rounded_lat, rounded_lon = round_coordinates(lat, lon)
+    return hashlib.md5(f"{rounded_lat}_{rounded_lon}".encode()).hexdigest()
+
+async def find_nearby_cached_weather(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    global _file_list_cache, _file_list_cache_time
+    try:
+        await monitor_disk_usage()
+        
+        if is_emergency_mode():
+            return None
+            
+        ensure_cache_dir()
+        
+        cache_files = []
+        async with _file_list_lock:
+            current_time = time.time()
+            if _file_list_cache is not None and current_time - _file_list_cache_time < 5:
+                cache_files = _file_list_cache
+            else:
+                def _scan_cache_files():
+                    try:
+                        return [f for f in os.listdir(CACHE_DIR) if f.endswith('.json')][:100]
+                    except:
+                        return []
+                
+                cache_files = await asyncio.to_thread(_scan_cache_files)
+                _file_list_cache = cache_files
+                _file_list_cache_time = current_time
+        
+        for cache_file in cache_files:
+            cache_path = os.path.join(CACHE_DIR, cache_file)
+            
+            try:
+                def _check_file_age():
+                    return time.time() - os.path.getmtime(cache_path)
+                
+                file_age = await asyncio.to_thread(_check_file_age)
+                if file_age > WEATHER_CACHE_DURATION:
+                    try:
+                        await asyncio.to_thread(os.remove, cache_path)
+                    except:
+                        pass
+                    continue
+                
+                async with aiofiles.open(cache_path, 'r') as f:
+                    content = await f.read()
+                    cached_data = await asyncio.to_thread(json.loads, content)
+                
+                cached_lat = cached_data.get('_cache_lat')
+                cached_lon = cached_data.get('_cache_lon')
+                
+                if cached_lat is None or cached_lon is None:
+                    continue
+                
+                distance = calculate_distance_km(lat, lon, cached_lat, cached_lon)
+                if distance <= DISTANCE_THRESHOLD_KM:
+                    return {k: v for k, v in cached_data.items() if k in WEATHER_KEYS}
+                    
+            except Exception:
+                try:
+                    await asyncio.to_thread(os.remove, cache_path)
+                except:
+                    pass
+                continue
+                
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] Cache lookup error: {e}")
+    
+    return None
+
+async def save_weather_to_cache(lat: float, lon: float, data: Dict[str, Any]):
+    try:
+        if is_emergency_mode():
+            return
+            
+        disk_stats = await monitor_disk_usage()
+        if disk_stats['available_mb'] < 500:
+            return
+            
+        ensure_cache_dir()
+        
+        cache_key = get_cache_key(lat, lon)
+        cache_file = os.path.join(CACHE_DIR, f"{cache_key}.json")
+        
+        cache_data = {k: v for k, v in data.items() if k in WEATHER_KEYS}
+        cache_data.update({
+            '_cache_lat': lat,
+            '_cache_lon': lon,
+            '_cache_time': datetime.datetime.now(datetime.timezone.utc).isoformat()
+        })
+        
+        json_content = await asyncio.to_thread(json.dumps, cache_data)
+        async with aiofiles.open(cache_file, 'w') as f:
+            await f.write(json_content)
+            
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] Cache write error: {e}")
