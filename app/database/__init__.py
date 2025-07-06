@@ -1,12 +1,14 @@
 from .connection import (
     init_db,
     get_pool,
-    create_partition_for_date,
-    ensure_partition_exists,
     close_pool,
-    get_pool_stats,
     DB_CONFIG
 )
+from .partitions.manager import (
+    create_partition_for_date,
+    ensure_partition_exists
+)
+from .stats.collector import get_pool_stats
 from .operations import (
     upsert_latest_state,
     save_timestamped_data,

@@ -2,7 +2,8 @@ import json
 import datetime
 import asyncpg
 from typing import Optional, Dict, Any, List
-from .connection import get_pool, ensure_partition_exists
+from .connection import get_pool
+from .partitions.manager import ensure_partition_exists
 from app.cache import invalidate_cache, CACHE_KEY_LATEST_DATA
 
 def _sanitize_payload(data: Any) -> Any:
