@@ -1,6 +1,6 @@
 import datetime
 from app.database import (
-    init_db, get_pool, get_pool_stats, save_timestamped_data,
+    init_db, get_pool, get_simple_pool_stats, save_timestamped_data,
     upsert_latest_state, get_raw_latest_payload_for_device,
     get_raw_latest_data_for_all_devices, get_timestamped_history,
     get_data_gaps, calculate_delta_changes, get_top_devices_by_records,
@@ -25,7 +25,7 @@ async def get_database_size():
             return "Unknown"
 
 __all__ = [
-    'init_db', 'get_pool', 'get_pool_stats', 'save_timestamped_data',
+    'init_db', 'get_pool', 'get_simple_pool_stats', 'save_timestamped_data',
     'upsert_latest_state', 'get_raw_latest_payload_for_device',
     'get_raw_latest_data_for_all_devices', 'get_timestamped_history',
     'get_data_gaps', 'calculate_delta_changes', 'get_top_devices_by_records',

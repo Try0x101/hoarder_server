@@ -1,12 +1,15 @@
-from .scheduler import FairTaskScheduler, TaskPriority, PriorityTask, classify_task_type
+from .simple_processor import TaskPriority, timeout_manager
+from .simple_manager import SimpleTaskManager
 
-__all__ = ['FairTaskScheduler', 'TaskPriority', 'PriorityTask', 'classify_task_type']
-from .priority_manager import PriorityQueueManager
-
-__all__ = ['FairTaskScheduler', 'TaskPriority', 'PriorityTask', 'classify_task_type', 'PriorityQueueManager']
-from .timeout_manager import AdaptiveTimeoutManager
+PriorityQueueManager = SimpleTaskManager
+AdaptiveTimeoutManager = type('AdaptiveTimeoutManager', (), {
+    'get_degradation_mode': lambda self, queue_pressure=0.0: timeout_manager.get_degradation_mode(queue_pressure),
+    'get_timeout_stats': lambda self, queue_pressure=0.0: timeout_manager.get_timeout_stats(queue_pressure)
+})
 
 __all__ = [
-    'FairTaskScheduler', 'TaskPriority', 'PriorityTask', 'classify_task_type', 
-    'PriorityQueueManager', 'AdaptiveTimeoutManager'
+    'TaskPriority', 
+    'PriorityQueueManager', 
+    'AdaptiveTimeoutManager',
+    'timeout_manager'
 ]

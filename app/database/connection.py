@@ -1,18 +1,12 @@
 import asyncpg
 import datetime
 import asyncio
-import time
 from typing import Optional
 from fastapi import HTTPException
 from .config import (
     DB_CONFIG, POOL_MIN_SIZE, POOL_MAX_SIZE, POOL_MAX_QUERIES, 
-    POOL_MAX_INACTIVE_TIME, CONNECTION_TIMEOUT, QUERY_TIMEOUT, CONNECTION_QUEUE_TIMEOUT
+    POOL_MAX_INACTIVE_TIME, CONNECTION_TIMEOUT, QUERY_TIMEOUT
 )
-from .queue.monitor import queue_monitor
-from .circuit_breaker import db_circuit_breaker
-from .priority.manager import priority_manager
-from .health.checker import check_pool_health, attempt_pool_recovery
-from .partitions.manager import create_partition_for_date
 
 pool = None
 _init_lock = asyncio.Lock()
@@ -20,65 +14,42 @@ _initialized = False
 
 async def get_pool():
     global pool
-    
-    if not db_circuit_breaker.can_execute():
-        raise HTTPException(503, "Database circuit breaker is OPEN")
-    
-    if not await check_pool_health(pool, priority_manager):
-        await attempt_pool_recovery(pool)
-    
     if pool is None:
         await init_db()
     return pool
 
-async def get_connection_with_timeout(timeout=CONNECTION_QUEUE_TIMEOUT, critical=False):
-    pool_instance = await get_pool()
-    if critical:
-        return await priority_manager.acquire_critical_connection(pool_instance, timeout)
-    else:
-        return await priority_manager.acquire_general_connection(pool_instance, timeout)
-
-async def release_connection_safe(conn, is_critical=False):
-    await priority_manager.release_connection(pool, conn, is_critical)
-
-async def safe_db_operation(operation_func, *args, critical=False, **kwargs):
-    if not db_circuit_breaker.can_execute():
-        raise HTTPException(503, "Database unavailable (circuit breaker open)")
-    
-    max_retries = 2 if critical else 1
+async def safe_db_operation(operation_func, *args, **kwargs):
+    max_retries = 2
     for attempt in range(max_retries):
         conn = None
-        is_critical = False
         try:
-            conn, is_critical = await get_connection_with_timeout(
-                timeout=CONNECTION_QUEUE_TIMEOUT, 
-                critical=critical
-            )
+            pool_instance = await get_pool()
+            conn = await asyncio.wait_for(pool_instance.acquire(), timeout=CONNECTION_TIMEOUT)
             
             result = await asyncio.wait_for(
                 operation_func(conn, *args, **kwargs), 
-                timeout=QUERY_TIMEOUT * (2 if critical else 1)
+                timeout=QUERY_TIMEOUT
             )
-            db_circuit_breaker.record_success()
             return result
             
         except asyncio.TimeoutError:
-            db_circuit_breaker.record_failure()
             if attempt < max_retries - 1:
                 await asyncio.sleep(0.2 * (attempt + 1))
                 continue
             raise HTTPException(503, "Database operation timeout")
             
-        except HTTPException:
-            raise
-            
         except Exception as e:
-            db_circuit_breaker.record_failure()
-            raise HTTPException(503, f"Unexpected database error: {e}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(0.2 * (attempt + 1))
+                continue
+            raise HTTPException(503, f"Database error: {e}")
         
         finally:
             if conn:
-                await release_connection_safe(conn, is_critical)
+                try:
+                    await pool.release(conn)
+                except Exception:
+                    pass
 
 async def init_db():
     global pool, _initialized
@@ -111,12 +82,8 @@ async def init_db():
                     END;
                     $$ LANGUAGE plpgsql;
                 """)
-                
-                now = datetime.datetime.now(datetime.timezone.utc)
-                await create_partition_for_date(conn, now)
-                await create_partition_for_date(conn, now + datetime.timedelta(days=32))
             
-            await safe_db_operation(setup_database, critical=True)
+            await safe_db_operation(setup_database)
             _initialized = True
             
         except Exception as e:
@@ -129,3 +96,15 @@ async def close_pool():
         await pool.close()
         pool = None
         _initialized = False
+
+async def get_simple_pool_stats():
+    if not pool:
+        return {"status": "not_initialized", "healthy": False}
+    
+    return {
+        "size": pool.get_size(),
+        "min_size": POOL_MIN_SIZE,
+        "max_size": POOL_MAX_SIZE,
+        "idle_connections": pool.get_idle_size(),
+        "healthy": True
+    }

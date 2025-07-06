@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from collections import defaultdict
 from .openmeteo_client import fetch_openmeteo_weather
 from .wttr_client import get_weather_from_wttr
-from .circuit_breaker import weather_circuit, wttr_circuit
+from .simple_breaker import weather_breaker, wttr_breaker
 
 WEATHER_CODE_DESCRIPTIONS = {
     0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
@@ -58,12 +58,12 @@ def can_make_api_request() -> bool:
     return True
 
 async def get_weather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
-    from .cache import find_nearby_cached_weather, save_weather_to_cache, get_cache_key
+    from .simple_cache import find_cached_weather, save_weather_cache, _get_cache_key as get_cache_key
 
     print(f"[{datetime.datetime.now()}] Weather request for {lat:.4f}, {lon:.4f}")
     
     try:
-        cached_data = await find_nearby_cached_weather(lat, lon)
+        cached_data = await find_cached_weather(lat, lon)
         if cached_data:
             print(f"[{datetime.datetime.now()}] Using cached weather data")
             return cached_data
@@ -73,7 +73,7 @@ async def get_weather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
     cache_key = get_cache_key(lat, lon)
     async with _api_locks[cache_key]:
         try:
-            cached_data = await find_nearby_cached_weather(lat, lon)
+            cached_data = await find_cached_weather(lat, lon)
             if cached_data:
                 return cached_data
         except Exception as e:
@@ -87,12 +87,12 @@ async def get_weather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
         fallback_result = None
         
         try:
-            primary_result = await weather_circuit.call(fetch_openmeteo_weather, lat, lon)
+            primary_result = await weather_breaker.call(fetch_openmeteo_weather, lat, lon)
             log_api_request()
             
             if primary_result and any(v is not None for v in primary_result.values()):
                 try:
-                    await save_weather_to_cache(lat, lon, primary_result)
+                    await save_weather_cache(lat, lon, primary_result)
                 except Exception as e:
                     print(f"[{datetime.datetime.now()}] Cache save failed: {e}")
                 print(f"[{datetime.datetime.now()}] OpenMeteo API success")
@@ -102,10 +102,10 @@ async def get_weather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
             print(f"[{datetime.datetime.now()}] OpenMeteo circuit breaker failed: {e}")
 
         try:
-            fallback_result = await wttr_circuit.call(get_weather_from_wttr, lat, lon)
+            fallback_result = await wttr_breaker.call(get_weather_from_wttr, lat, lon)
             if fallback_result:
                 try:
-                    await save_weather_to_cache(lat, lon, fallback_result)
+                    await save_weather_cache(lat, lon, fallback_result)
                 except Exception as e:
                     print(f"[{datetime.datetime.now()}] Fallback cache save failed: {e}")
                 print(f"[{datetime.datetime.now()}] Fallback WTTR success")
