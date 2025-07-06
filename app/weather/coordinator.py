@@ -23,13 +23,13 @@ DAILY_API_LIMIT = 9000
 REQUEST_LOG_FILE = "/tmp/weather_requests.log"
 _api_locks = defaultdict(asyncio.Lock)
 
-def log_api_request():
+def safe_log_api_request():
     try:
         timestamp = datetime.datetime.now().isoformat()
         with open(REQUEST_LOG_FILE, 'a') as f:
             f.write(f"{timestamp}\n")
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] Failed to log API request: {e}")
+    except Exception:
+        pass
 
 def get_today_request_count() -> int:
     try:
@@ -46,8 +46,7 @@ def get_today_request_count() -> int:
                 except:
                     continue
         return count
-    except Exception as e:
-        print(f"[{datetime.datetime.now()}] Failed to count requests: {e}")
+    except Exception:
         return 0
 
 def can_make_api_request() -> bool:
@@ -57,8 +56,11 @@ def can_make_api_request() -> bool:
         return False
     return True
 
+def create_cache_key(lat: float, lon: float) -> str:
+    return f"{round(lat, 3)},{round(lon, 3)}"
+
 async def get_weather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
-    from .simple_cache import find_cached_weather, save_weather_cache, _get_cache_key as get_cache_key
+    from .simple_cache import find_cached_weather, save_weather_cache
 
     print(f"[{datetime.datetime.now()}] Weather request for {lat:.4f}, {lon:.4f}")
     
@@ -70,56 +72,68 @@ async def get_weather_data(lat: float, lon: float) -> Optional[Dict[str, Any]]:
     except Exception as e:
         print(f"[{datetime.datetime.now()}] Cache lookup failed: {e}")
 
-    cache_key = get_cache_key(lat, lon)
+    cache_key = create_cache_key(lat, lon)
     async with _api_locks[cache_key]:
         try:
             cached_data = await find_cached_weather(lat, lon)
             if cached_data:
                 return cached_data
-        except Exception as e:
-            print(f"[{datetime.datetime.now()}] Post-lock cache lookup failed: {e}")
+        except Exception:
+            pass
 
         if not can_make_api_request():
             print(f"[{datetime.datetime.now()}] Daily API limit reached, trying WTTR fallback")
             return await get_weather_from_wttr(lat, lon)
 
-        primary_result = None
-        fallback_result = None
-        
-        try:
-            primary_result = await weather_breaker.call(fetch_openmeteo_weather, lat, lon)
-            log_api_request()
-            
-            if primary_result and any(v is not None for v in primary_result.values()):
-                try:
-                    await save_weather_cache(lat, lon, primary_result)
-                except Exception as e:
-                    print(f"[{datetime.datetime.now()}] Cache save failed: {e}")
-                print(f"[{datetime.datetime.now()}] OpenMeteo API success")
-                return primary_result
+        primary_result = await try_primary_weather_api(lat, lon)
+        if primary_result:
+            try:
+                await save_weather_cache(lat, lon, primary_result)
+            except Exception as e:
+                print(f"[{datetime.datetime.now()}] Cache save failed: {e}")
+            return primary_result
 
-        except Exception as e:
-            print(f"[{datetime.datetime.now()}] OpenMeteo circuit breaker failed: {e}")
-
-        try:
-            fallback_result = await wttr_breaker.call(get_weather_from_wttr, lat, lon)
-            if fallback_result:
-                try:
-                    await save_weather_cache(lat, lon, fallback_result)
-                except Exception as e:
-                    print(f"[{datetime.datetime.now()}] Fallback cache save failed: {e}")
-                print(f"[{datetime.datetime.now()}] Fallback WTTR success")
-                return fallback_result
-        except Exception as e:
-            print(f"[{datetime.datetime.now()}] Fallback WTTR also failed: {e}")
+        fallback_result = await try_fallback_weather_api(lat, lon)
+        if fallback_result:
+            try:
+                await save_weather_cache(lat, lon, fallback_result)
+            except Exception as e:
+                print(f"[{datetime.datetime.now()}] Fallback cache save failed: {e}")
+            return fallback_result
 
     print(f"[{datetime.datetime.now()}] All weather APIs failed")
     return None
 
-async def get_weather_service_status():
-    from .circuit_breaker import get_weather_circuit_status
+async def try_primary_weather_api(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    try:
+        result = await weather_breaker.call(fetch_openmeteo_weather, lat, lon)
+        safe_log_api_request()
+        
+        if result and any(v is not None for v in result.values()):
+            print(f"[{datetime.datetime.now()}] OpenMeteo API success")
+            return result
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] OpenMeteo circuit breaker failed: {e}")
     
-    circuit_status = await get_weather_circuit_status()
+    return None
+
+async def try_fallback_weather_api(lat: float, lon: float) -> Optional[Dict[str, Any]]:
+    try:
+        result = await wttr_breaker.call(get_weather_from_wttr, lat, lon)
+        if result:
+            print(f"[{datetime.datetime.now()}] Fallback WTTR success")
+            return result
+    except Exception as e:
+        print(f"[{datetime.datetime.now()}] Fallback WTTR also failed: {e}")
+    
+    return None
+
+async def get_weather_service_status():
+    try:
+        from .simple_breaker import get_breaker_status
+        circuit_status = await get_breaker_status()
+    except Exception:
+        circuit_status = {"error": "circuit_status_unavailable"}
     
     return {
         **circuit_status,

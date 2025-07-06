@@ -48,16 +48,12 @@ class StreamProcessor:
                 chunk_errors = 0
                 for item in chunk:
                     if not isinstance(item, dict):
+                        chunk_errors += 1
                         continue
                     
-                    item_copy = {
-                        'source_ip': source_ip,
-                        'user_agent': user_agent,
-                        'batch_id': batch_id,
-                        **{k: v for k, v in item.items() if k not in ['source_ip', 'user_agent', 'batch_id']}
-                    }
-                    
                     try:
+                        item_copy = self._prepare_item_data(item, source_ip, user_agent, batch_id)
+                        
                         if 'bts' in item_copy:
                             current_bts = self._parse_base_timestamp(item_copy['bts'])
                             if current_bts:
@@ -67,6 +63,7 @@ class StreamProcessor:
                         actual_timestamp = self._calculate_actual_timestamp(item_copy, current_bts)
                         await self._process_batch_item_optimized(item_copy, actual_timestamp)
                         processed += 1
+                        
                     except Exception as e:
                         chunk_errors += 1
                         errors += 1
@@ -74,11 +71,8 @@ class StreamProcessor:
                             yield f"data: {json.dumps({'error': f'Too many processing errors: {errors}/{len(batch_data)}'})}\n\n"
                             return
                     
-                    del item_copy
-                    
                     if processed % MEMORY_CHECK_INTERVAL == 0:
                         await self.memory_manager.update_batch_progress(batch_id, processed)
-                        
                         if processed % (MEMORY_CHECK_INTERVAL * 4) == 0:
                             await asyncio.sleep(0.01)
                 
@@ -101,20 +95,28 @@ class StreamProcessor:
             await self.memory_manager.release_batch_memory(batch_id)
             await self.memory_manager.aggressive_memory_cleanup()
 
+    def _prepare_item_data(self, item: dict, source_ip: str, user_agent: str, batch_id: str) -> dict:
+        return {
+            'source_ip': source_ip,
+            'user_agent': user_agent,
+            'batch_id': batch_id,
+            **{k: v for k, v in item.items() if k not in ['source_ip', 'user_agent', 'batch_id']}
+        }
+
     def _parse_base_timestamp(self, bts_value) -> Optional[datetime.datetime]:
+        if not bts_value:
+            return None
         try:
             unix_timestamp = float(bts_value)
+            if unix_timestamp > 1000000000000:
+                unix_timestamp = unix_timestamp / 1000
             return datetime.datetime.fromtimestamp(unix_timestamp, tz=datetime.timezone.utc)
         except (ValueError, TypeError, OSError):
             return None
 
     def _calculate_actual_timestamp(self, item: dict, current_bts: Optional[datetime.datetime]) -> datetime.datetime:
         if "bts" in item:
-            try:
-                unix_timestamp = float(item["bts"])
-                return datetime.datetime.fromtimestamp(unix_timestamp, tz=datetime.timezone.utc)
-            except (ValueError, TypeError, OSError):
-                pass
+            return self._parse_base_timestamp(item["bts"]) or datetime.datetime.now(datetime.timezone.utc)
         
         if current_bts and "tso" in item:
             try:
@@ -125,8 +127,14 @@ class StreamProcessor:
         
         if "timestamp" in item:
             try:
-                return datetime.datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
-            except (ValueError, TypeError):
+                ts_str = str(item["timestamp"]).strip()
+                if ts_str.replace('.', '').isdigit():
+                    unix_ts = float(ts_str)
+                    if unix_ts > 1000000000000:
+                        unix_ts = unix_ts / 1000
+                    return datetime.datetime.fromtimestamp(unix_ts, tz=datetime.timezone.utc)
+                return datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            except (ValueError, TypeError, OSError):
                 pass
         
         return datetime.datetime.now(datetime.timezone.utc)

@@ -4,7 +4,7 @@ import asyncio
 import psutil
 from fastapi import APIRouter, Request, HTTPException
 from app.responses import PrettyJSONResponse
-from app.validation import decode_raw_data, decode_maximum_compression
+from app.validation import decode_raw_data, decode_maximum_compression, validate_device_data
 from app.weather import enrich_with_weather_data
 from app.db import save_timestamped_data, upsert_latest_state
 from app.tasks import PriorityQueueManager, TaskPriority, AdaptiveTimeoutManager
@@ -36,13 +36,70 @@ async def weather_enrichment_and_state_update(data: dict):
     except Exception as e:
         print(f"[{datetime.datetime.now(datetime.timezone.utc)}] ERROR in state update: {e}")
 
-def safe_int_header(header_value):
+def safe_header_value(header_value, default=None):
     if header_value is None:
-        return None
+        return default
+    try:
+        return str(header_value).strip()
+    except (ValueError, TypeError):
+        return default
+
+def safe_int_header(header_value, default=None):
+    if header_value is None:
+        return default
     try:
         return int(header_value)
     except (ValueError, TypeError):
-        return None
+        return default
+
+def extract_client_info(request: Request):
+    return {
+        'source_ip': request.client.host if request.client else None,
+        'user_agent': safe_header_value(request.headers.get('user-agent')),
+        'content_size_bytes': safe_int_header(request.headers.get('content-length')),
+        'x_forwarded_for': safe_header_value(request.headers.get('x-forwarded-for')),
+        'x_real_ip': safe_header_value(request.headers.get('x-real-ip')),
+        'content_type': safe_header_value(request.headers.get('content-type')),
+        'content_encoding': safe_header_value(request.headers.get('content-encoding')),
+        'server_received_at': datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }
+
+def parse_device_timestamp(data: dict) -> datetime.datetime:
+    data_timestamp = datetime.datetime.now(datetime.timezone.utc)
+    
+    timestamp_fields = ['timestamp', 'ts', 'time', 'datetime']
+    
+    for field in timestamp_fields:
+        if field in data and data[field]:
+            try:
+                ts_value = data[field]
+                
+                if isinstance(ts_value, (int, float)):
+                    if ts_value > 1000000000000:
+                        ts_value = ts_value / 1000
+                    data_timestamp = datetime.datetime.fromtimestamp(ts_value, tz=datetime.timezone.utc)
+                    break
+                
+                if isinstance(ts_value, str):
+                    ts_value = ts_value.strip()
+                    
+                    if ts_value.replace('.', '').isdigit():
+                        unix_ts = float(ts_value)
+                        if unix_ts > 1000000000000:
+                            unix_ts = unix_ts / 1000
+                        data_timestamp = datetime.datetime.fromtimestamp(unix_ts, tz=datetime.timezone.utc)
+                        break
+                    
+                    dt = datetime.datetime.fromisoformat(ts_value.replace('Z', '+00:00'))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    data_timestamp = dt
+                    break
+                    
+            except (ValueError, TypeError, OSError):
+                continue
+    
+    return data_timestamp
 
 @router.post("/api/telemetry", response_class=PrettyJSONResponse)
 async def receive_telemetry(request: Request):
@@ -59,7 +116,10 @@ async def receive_telemetry(request: Request):
     raw = await request.body()
     
     if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Payload too large")
+        raise HTTPException(status_code=413, detail="Payload too large (max 5MB)")
+    
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="Empty payload")
     
     compression_type = request.headers.get("x-compression-type")
 
@@ -68,26 +128,20 @@ async def receive_telemetry(request: Request):
             data = await decode_maximum_compression(raw)
         else:
             data = await decode_raw_data(raw)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid data format")
+        
+        if "error" in data:
+            raise HTTPException(status_code=400, detail=f"Decode error: {data.get('error', 'Unknown')}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid data format: {str(e)}")
 
-    data['source_ip'] = request.client.host if request.client else None
-    data['user_agent'] = request.headers.get('user-agent')
-    data['content_size_bytes'] = safe_int_header(request.headers.get('content-length'))
-    data['x_forwarded_for'] = request.headers.get('x-forwarded-for')
-    data['x_real_ip'] = request.headers.get('x-real-ip')
-    data['server_received_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    validation_result = validate_device_data(data)
+    if not validation_result['is_valid']:
+        raise HTTPException(status_code=400, detail=f"Validation failed: {validation_result['errors']}")
 
-    data_timestamp = datetime.datetime.now(datetime.timezone.utc)
-    if 'timestamp' in data:
-        try:
-            dt = datetime.datetime.fromisoformat(data['timestamp'].replace('Z','+00:00'))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=datetime.timezone.utc)
-            data_timestamp = dt
-        except:
-            pass
+    client_info = extract_client_info(request)
+    data.update(client_info)
 
+    data_timestamp = parse_device_timestamp(data)
     device_id = data.get("device_id") or data.get("id") or "auto-generated"
 
     critical_task_id = f"storage_{device_id}_{int(datetime.datetime.now().timestamp() * 1000)}"
@@ -114,6 +168,7 @@ async def receive_telemetry(request: Request):
         "status": "received",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "device_id": device_id,
+        "validation_warnings": validation_result.get('warnings', []),
         "source_ip": data.get("source_ip"),
         "user_agent_detected": bool(data.get("user_agent")),
         "data_size_bytes": len(raw),

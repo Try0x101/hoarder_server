@@ -48,26 +48,26 @@ class WeatherRateLimiter:
         self.fallback_counts = {}
         self.last_fallback_reset = 0
         
-    async def _ensure_script_loaded(self):
+    async def _ensure_script_loaded(self) -> bool:
         if not redis_client:
             return False
             
-        if not self.script_sha:
-            try:
-                self.script_sha = await redis_client.script_load(REDIS_RATE_LIMIT_SCRIPT)
-                print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Weather rate limit script loaded: {self.script_sha}")
-                return True
-            except Exception as e:
-                print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Failed to load rate limit script: {e}")
-                return False
-        return True
+        if self.script_sha:
+            return True
+            
+        try:
+            self.script_sha = await redis_client.script_load(REDIS_RATE_LIMIT_SCRIPT)
+            print(f"[{datetime.datetime.now()}] Weather rate limit script loaded: {self.script_sha}")
+            return True
+        except Exception as e:
+            print(f"[{datetime.datetime.now()}] Failed to load rate limit script: {e}")
+            return False
         
     async def check_global_rate_limit(self) -> Tuple[bool, str, Dict]:
         if not redis_client:
             return self._fallback_rate_limit()
             
-        script_loaded = await self._ensure_script_loaded()
-        if not script_loaded:
+        if not await self._ensure_script_loaded():
             return self._fallback_rate_limit()
             
         try:
@@ -75,9 +75,7 @@ class WeatherRateLimiter:
             global_key = f"global:weather_rate:{current_minute}"
             
             result = await redis_client.evalsha(
-                self.script_sha,
-                1,
-                global_key,
+                self.script_sha, 1, global_key,
                 str(MAX_WEATHER_FETCHES_PER_MINUTE),
                 str(BURST_WEATHER_FETCHES_LIMIT),
                 str(WEATHER_QUOTA_RESET_INTERVAL)
@@ -100,37 +98,40 @@ class WeatherRateLimiter:
             return success, message, stats
             
         except Exception as e:
-            print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Redis rate limit check failed: {e}")
+            print(f"[{datetime.datetime.now()}] Redis rate limit check failed: {e}")
             return self._fallback_rate_limit()
     
     def _fallback_rate_limit(self) -> Tuple[bool, str, Dict]:
-        current_time = datetime.datetime.now(datetime.timezone.utc).timestamp()
-        current_minute = int(current_time // 60)
-        
-        if self.last_fallback_reset != current_minute:
-            self.fallback_counts = {}
-            self.last_fallback_reset = current_minute
+        try:
+            current_time = datetime.datetime.now(datetime.timezone.utc).timestamp()
+            current_minute = int(current_time // 60)
             
-        current_count = self.fallback_counts.get(current_minute, 0)
-        
-        if current_count >= MAX_WEATHER_FETCHES_PER_MINUTE:
+            if self.last_fallback_reset != current_minute:
+                self.fallback_counts = {}
+                self.last_fallback_reset = current_minute
+                
+            current_count = self.fallback_counts.get(current_minute, 0)
+            
+            if current_count >= MAX_WEATHER_FETCHES_PER_MINUTE:
+                stats = {
+                    'current_count': current_count,
+                    'limit': MAX_WEATHER_FETCHES_PER_MINUTE,
+                    'reason': 'fallback_rate_limited',
+                    'method': 'fallback_memory'
+                }
+                return False, f"Fallback rate limit exceeded ({current_count}/{MAX_WEATHER_FETCHES_PER_MINUTE})", stats
+            
+            self.fallback_counts[current_minute] = current_count + 1
+            
             stats = {
-                'current_count': current_count,
+                'current_count': current_count + 1,
                 'limit': MAX_WEATHER_FETCHES_PER_MINUTE,
-                'reason': 'fallback_rate_limited',
+                'reason': 'fallback_allowed',
                 'method': 'fallback_memory'
             }
-            return False, f"Fallback rate limit exceeded ({current_count}/{MAX_WEATHER_FETCHES_PER_MINUTE})", stats
-        
-        self.fallback_counts[current_minute] = current_count + 1
-        
-        stats = {
-            'current_count': current_count + 1,
-            'limit': MAX_WEATHER_FETCHES_PER_MINUTE,
-            'reason': 'fallback_allowed',
-            'method': 'fallback_memory'
-        }
-        
-        return True, f"Fallback rate limit OK ({current_count + 1}/{MAX_WEATHER_FETCHES_PER_MINUTE})", stats
+            
+            return True, f"Fallback rate limit OK ({current_count + 1}/{MAX_WEATHER_FETCHES_PER_MINUTE})", stats
+        except Exception as e:
+            return False, f"Rate limit error: {e}", {'error': str(e), 'method': 'error_fallback'}
 
 weather_rate_limiter = WeatherRateLimiter()

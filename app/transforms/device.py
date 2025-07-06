@@ -12,6 +12,30 @@ def safe_float(value):
  try:return float(value)
  except (ValueError,TypeError):return None
 
+def normalize_bssid(bssid_value):
+    if bssid_value is None:
+        return None
+    
+    str_value = str(bssid_value).strip()
+    
+    if str_value in ['0', '', 'error', 'null', 'none']:
+        return None
+    
+    if str_value.lower() in ['error', 'null', 'none']:
+        return None
+    
+    try:
+        if int(str_value) == 0:
+            return None
+    except (ValueError, TypeError):
+        pass
+    
+    return str_value
+
+def get_network_active(received_data):
+    bssid = normalize_bssid(received_data.get('bssid'))
+    return 'Wi-Fi' if bssid else received_data.get('nt')
+
 def get_wind_direction_compass(wind_direction_10m):
     if wind_direction_10m is None:
         return ""
@@ -37,9 +61,6 @@ def get_wind_direction_compass(wind_direction_10m):
         return ""
     except (ValueError, TypeError):
         return ""
-
-def get_network_active(received_data):
-    return 'Wi-Fi' if received_data.get('bssid') and received_data.get('bssid') not in ['0', '', 'error'] else received_data.get('nt')
 
 def get_barometric_data(received_data):
     if 'bar' in received_data and received_data.get('bar') is not None:
@@ -87,39 +108,35 @@ def format_weather_observation_time(weather_observation_time, location_tz, locat
         return f"{weather_observation_time} (format error)"
 
 async def get_weather_fetch_formatted(device_id, location_tz, location_timezone):
-    weather_fetch_formatted = None
-    if device_id:
+    if not device_id:
+        return None
+        
+    try:
+        from app.device_tracker import get_device_position
+        position = await get_device_position(device_id)
+        
+        if not position or 'last_weather_update' not in position:
+            return None
+            
+        weather_last_fetched_iso = position['last_weather_update']
+        if not weather_last_fetched_iso:
+            return None
+            
         try:
-            from app.device_tracker import get_device_position
-            position = await get_device_position(device_id)
-            if position and 'last_weather_update' in position:
-                weather_last_fetched_iso = position['last_weather_update']
-                weather_time_utc = None
-                try:
-                    weather_time_utc = datetime.datetime.fromisoformat(weather_last_fetched_iso)
-                except ValueError:
-                    try:
-                        weather_time_utc = datetime.datetime.strptime(weather_last_fetched_iso, '%d.%m.%Y %H:%M:%S')
-                    except Exception as strptime_err:
-                        print(f"Could not parse weather fetch timestamp '{weather_last_fetched_iso}': {strptime_err}")
-                        weather_fetch_formatted = weather_last_fetched_iso
-                if weather_time_utc:
-                    if weather_time_utc.tzinfo is None:
-                        weather_time_utc = pytz.utc.localize(weather_time_utc)
-                    if location_tz:
-                        weather_time_local = weather_time_utc.astimezone(location_tz)
-                        weather_fetch_formatted = f"{weather_time_local.strftime('%d.%m.%Y %H:%M:%S')} {location_timezone}"
-                    else:
-                        weather_fetch_formatted = f"{weather_time_utc.strftime('%d.%m.%Y %H:%M:%S')} UTC"
+            weather_time_utc = datetime.datetime.fromisoformat(weather_last_fetched_iso.replace('Z', '+00:00'))
+            if weather_time_utc.tzinfo is None:
+                weather_time_utc = weather_time_utc.replace(tzinfo=datetime.timezone.utc)
+                
+            if location_tz:
+                weather_time_local = weather_time_utc.astimezone(location_tz)
+                return f"{weather_time_local.strftime('%d.%m.%Y %H:%M:%S')} {location_timezone or 'UTC'}"
+            else:
+                return f"{weather_time_utc.strftime('%d.%m.%Y %H:%M:%S')} UTC"
+                
         except Exception as e:
-            print(f"Error getting weather fetch time from device tracker: {e}")
-
-    if not weather_fetch_formatted:
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        if location_tz:
-            now_local = now_utc.astimezone(location_tz)
-            weather_fetch_formatted = f"{now_local.strftime('%d.%m.%Y %H:%M:%S')} {location_timezone}"
-        else:
-            weather_fetch_formatted = f"{now_utc.strftime('%d.%m.%Y %H:%M:%S')} UTC"
-
-    return weather_fetch_formatted
+            print(f"Error parsing weather timestamp '{weather_last_fetched_iso}': {e}")
+            return weather_last_fetched_iso
+            
+    except Exception as e:
+        print(f"Error getting weather fetch time for device {device_id}: {e}")
+        return None
