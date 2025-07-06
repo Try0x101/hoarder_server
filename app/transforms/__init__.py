@@ -11,8 +11,7 @@ from .time import (
     get_current_location_time,
     get_location_time_info,
     format_last_refresh_time,
-    get_timezone_info_from_coordinates,
-    calculate_weather_data_age
+    get_timezone_info_from_coordinates
 )
 from .geo import (
     calculate_distance_km
@@ -30,6 +29,5 @@ __all__ = [
     'get_location_time_info',
     'format_last_refresh_time',
     'get_timezone_info_from_coordinates',
-    'calculate_weather_data_age',
     'calculate_distance_km'
 ]

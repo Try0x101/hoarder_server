@@ -4,6 +4,7 @@ import asyncio
 import asyncpg
 import gc
 from typing import AsyncGenerator, Optional, Dict, Any
+from collections import defaultdict
 from app.weather import enrich_with_weather_data
 from app.database import DB_CONFIG
 from .memory_manager import BatchMemoryManager
@@ -14,6 +15,7 @@ MEMORY_CHECK_INTERVAL = 5
 class DeltaProcessor:
     def __init__(self, memory_manager: BatchMemoryManager):
         self.memory_manager = memory_manager
+        self.device_locks = defaultdict(asyncio.Lock)
         
     async def process_delta_stream(self, deltas: list, source_ip: str, user_agent: str) -> AsyncGenerator[str, None]:
         batch_id = f"delta_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}_{hash(str(source_ip)) % 10000:04d}"
@@ -63,33 +65,34 @@ class DeltaProcessor:
         if not device_id or not isinstance(device_id, str):
             return False
 
-        try:
-            data_timestamp = self._convert_relative_timestamp(delta.get('ts'))
-            
-            record_exists = await conn.fetchval(
-                "SELECT EXISTS(SELECT 1 FROM timestamped_data WHERE device_id = $1 AND data_timestamp = $2)",
-                device_id, data_timestamp
-            )
-            if record_exists:
+        async with self.device_locks[device_id]:
+            try:
+                data_timestamp = self._convert_relative_timestamp(delta.get('ts'))
+                
+                record_exists = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM timestamped_data WHERE device_id = $1 AND data_timestamp = $2)",
+                    device_id, data_timestamp
+                )
+                if record_exists:
+                    return True
+
+                base_payload = await self._get_device_base_state(conn, device_id)
+                reconstructed = self._reconstruct_payload(delta, base_payload, source_ip, user_agent, batch_id)
+                
+                if reconstructed.get('lat') and reconstructed.get('lon'):
+                    try:
+                        enriched = await asyncio.wait_for(enrich_with_weather_data(reconstructed), timeout=2)
+                        reconstructed = enriched
+                    except (asyncio.TimeoutError, Exception):
+                        pass
+
+                await self._save_delta_data(conn, device_id, reconstructed, data_timestamp, batch_id)
+                await self._update_device_state(conn, device_id, reconstructed)
+                
                 return True
-
-            base_payload = await self._get_device_base_state(conn, device_id)
-            reconstructed = self._reconstruct_payload(delta, base_payload, source_ip, user_agent, batch_id)
-            
-            if reconstructed.get('lat') and reconstructed.get('lon'):
-                try:
-                    enriched = await asyncio.wait_for(enrich_with_weather_data(reconstructed), timeout=2)
-                    reconstructed = enriched
-                except (asyncio.TimeoutError, Exception):
-                    pass
-
-            await self._save_delta_data(conn, device_id, reconstructed, data_timestamp, batch_id)
-            await self._update_device_state(conn, device_id, reconstructed)
-            
-            return True
-        except Exception as e:
-            print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Single delta error for {device_id}: {e}")
-            return False
+            except Exception as e:
+                print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Single delta error for {device_id}: {e}")
+                return False
 
     async def _get_device_base_state(self, conn, device_id: str) -> Dict[str, Any]:
         try:

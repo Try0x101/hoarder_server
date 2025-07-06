@@ -2,8 +2,7 @@ from app.weather import WEATHER_CODE_DESCRIPTIONS
 from app.transforms import (
     safe_int, safe_float, get_wind_direction_compass, get_network_active,
     format_weather_observation_time, get_weather_fetch_formatted,
-    get_current_location_time, format_last_refresh_time, get_timezone_info_from_coordinates,
-    calculate_weather_data_age
+    get_current_location_time, format_last_refresh_time, get_timezone_info_from_coordinates
 )
 from .helpers import safe_string
 from .fingerprint import safe_device_id
@@ -19,7 +18,7 @@ async def transform_device_data(received_data):
     )
     
     weather_fetch_fmt = await get_weather_fetch_formatted(device_id, loc_tz, loc_tz_str)
-    _, last_refresh_utc, _ = format_last_refresh_time(received_data, loc_tz, loc_tz_str)
+    _, last_refresh_utc = format_last_refresh_time(received_data, loc_tz, loc_tz_str)
     
     wind_dir_compass = get_wind_direction_compass(received_data.get('wind_direction_10m'))
     weather_obs_fmt = format_weather_observation_time(received_data.get('weather_observation_time'), loc_tz, loc_tz_str)
@@ -58,7 +57,6 @@ async def transform_device_data(received_data):
         'weather_wind_gusts': f"{safe_int(received_data.get('wind_gusts_10m'))} m/s" if received_data.get('wind_gusts_10m') is not None else None,
         'weather_observation_time': weather_obs_fmt,
         'weather_last_fetch_request_time': weather_fetch_fmt,
-        'weather_fetch_data_age': calculate_weather_data_age(weather_fetch_fmt),
         'marine_wave_height': f"{safe_int(received_data.get('marine_wave_height'))} m" if received_data.get('marine_wave_height') is not None else None,
         'marine_wave_direction': f"{safe_int(received_data.get('marine_wave_direction'))}°" if received_data.get('marine_wave_direction') is not None else None,
         'marine_wave_period': f"{safe_int(received_data.get('marine_wave_period'))} s" if received_data.get('marine_wave_period') is not None else None,

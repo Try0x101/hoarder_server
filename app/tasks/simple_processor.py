@@ -17,6 +17,8 @@ class SimpleTaskProcessor:
             'completed': 0,
             'failed': 0,
             'timeout': 0,
+            'retried': 0,
+            'permanently_failed': 0,
             'start_time': time.time()
         }
         
@@ -29,7 +31,14 @@ class SimpleTaskProcessor:
             self.workers.append(worker)
     
     async def enqueue_task(self, coro, priority: TaskPriority = TaskPriority.NORMAL, timeout: float = 15.0) -> bool:
-        task_data = {'coro': coro, 'timeout': timeout, 'created': time.time()}
+        task_data = {
+            'coro': coro, 
+            'timeout': timeout, 
+            'created': time.time(),
+            'retries': 0,
+            'max_retries': 2,
+            'priority': priority
+        }
         
         try:
             if priority == TaskPriority.CRITICAL:
@@ -70,11 +79,19 @@ class SimpleTaskProcessor:
             )
             self.stats['completed'] += 1
             
-        except asyncio.TimeoutError:
-            self.stats['timeout'] += 1
-            
-        except Exception:
-            self.stats['failed'] += 1
+        except (asyncio.TimeoutError, Exception) as e:
+            if isinstance(e, asyncio.TimeoutError):
+                self.stats['timeout'] += 1
+            else:
+                self.stats['failed'] += 1
+
+            if task_data.get('retries', 0) < task_data.get('max_retries', 1):
+                task_data['retries'] += 1
+                self.stats['retried'] += 1
+                await asyncio.sleep(0.1 * task_data['retries'])
+                await self.enqueue_task(task_data['coro'], task_data['priority'], task_data['timeout'])
+            else:
+                self.stats['permanently_failed'] += 1
     
     def get_queue_pressure(self):
         critical_size = self.critical_queue.qsize()

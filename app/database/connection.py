@@ -24,6 +24,9 @@ async def safe_db_operation(operation_func, *args, **kwargs):
         conn = None
         try:
             pool_instance = await get_pool()
+            if not pool_instance:
+                raise Exception("Database pool not available")
+
             conn = await asyncio.wait_for(pool_instance.acquire(), timeout=CONNECTION_TIMEOUT)
             
             result = await asyncio.wait_for(
@@ -45,7 +48,7 @@ async def safe_db_operation(operation_func, *args, **kwargs):
             raise HTTPException(503, f"Database error: {e}")
         
         finally:
-            if conn:
+            if conn and pool:
                 try:
                     await pool.release(conn)
                 except Exception:
@@ -88,7 +91,8 @@ async def init_db():
             
         except Exception as e:
             print(f"Database initialization failed: {e}")
-            raise
+            pool = None
+            _initialized = False
 
 async def close_pool():
     global pool, _initialized
