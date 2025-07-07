@@ -71,4 +71,4 @@ async def ensure_partition_exists(data_timestamp):
     async def create_partition_op(conn):
         await create_partition_for_date(conn, data_timestamp)
     
-    await safe_db_operation(create_partition_op, critical=True)
+    await safe_db_operation(create_partition_op)
