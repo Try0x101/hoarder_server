@@ -15,9 +15,15 @@ async def handle_latest_data(request: Request):
         raw_data = await get_cached_latest_data()
         processed_data = await process_and_link_data(raw_data, base_url)
         return {
-            "links": {"self": f"{base_url}/data/latest", "home": f"{base_url}/", "history": f"{base_url}/data/history"},
-            "server_time": "2025-07-06T18:45:00Z",
-            "total_devices": len(processed_data),
+            "meta": {
+                "server_time": "2025-07-06T18:45:00Z",
+                "total_devices": len(processed_data),
+                "links": {
+                    "self": f"{base_url}/data/latest", 
+                    "home": f"{base_url}/", 
+                    "history": f"{base_url}/data/history"
+                }
+            },
             "devices": processed_data
         }
     except Exception as e:
@@ -33,16 +39,15 @@ async def handle_device_data(device_id: str, request: Request):
         raw_payload = await get_cached_device_data(device_id)
         if raw_payload is None:
             return await handle_device_not_found(device_id, base_url)
-        try:
-            transformed_payload = await transform_device_data(raw_payload)
-        except Exception as e:
-            print(f"Transform error for device {device_id}: {e}")
-            transformed_payload = {"error": "transformation_failed", "device_id": device_id, "raw_data_size": len(str(raw_payload)) if raw_payload else 0}
-        return {
-            "links": {"parent": f"{base_url}/data/latest", **create_device_links(base_url, device_id)},
-            "device_id": device_id,
-            "payload": transformed_payload
+        
+        transformed_payload = await transform_device_data(raw_payload)
+        
+        response_payload = {
+            "links": create_device_links(base_url, device_id),
+            **transformed_payload
         }
+        return response_payload
+        
     except Exception as e:
         print(f"Device data endpoint error for {device_id}: {e}")
         raise HTTPException(status_code=500, detail="Data retrieval failed")
@@ -52,14 +57,12 @@ async def handle_device_not_found(device_id: str, base_url: str):
         all_devices_raw = await get_raw_latest_data_for_all_devices()
         devices_with_time = []
         for device in all_devices_raw[:20]:
-            if not isinstance(device, dict):
-                continue
+            if not isinstance(device, dict): continue
             dev_id = device.get("device_id")
-            if not dev_id:
-                continue
+            if not dev_id: continue
             try:
                 transformed = await transform_device_data(device.get("payload", {}))
-                last_active_str = transformed.get("last_refresh_time_utc_reference", "unknown")
+                last_active_str = transformed.get("timestamps", {}).get("last_refresh_time_utc", "unknown")
             except Exception:
                 last_active_str = "transformation_failed"
             devices_with_time.append({"device_id": dev_id, "last_active": last_active_str, "link": f"{base_url}/data/latest/{dev_id}"})

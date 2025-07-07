@@ -2,7 +2,7 @@ import datetime
 from fastapi import Request, Query, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Optional
-from .queries import get_active_devices, get_device_gaps_data, get_device_statistics, get_device_activity_stats, get_device_position_stats
+from .queries import get_active_devices, get_device_statistics
 from ..shared.url_helpers import build_base_url, safe_int_param, create_device_links, create_pagination_links
 from app.db import get_timestamped_history
 

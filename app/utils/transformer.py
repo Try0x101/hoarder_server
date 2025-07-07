@@ -14,68 +14,82 @@ async def transform_device_data(received_data):
         lon = received_data.get('lon')
         
         loc_date, loc_time, loc_tz_str, loc_tz = get_timezone_info_from_coordinates(lat, lon)
-        current_time = get_current_location_time(loc_tz) if loc_tz else None
         
-        device_id = safe_device_id(
+        device_id_val = safe_device_id(
             received_data.get('id') or received_data.get('device_id'),
             received_data.get('source_ip'), received_data.get('user_agent'), received_data
         )
         
-        weather_fetch_fmt = await get_weather_fetch_formatted(device_id, loc_tz, loc_tz_str)
+        weather_fetch_fmt = await get_weather_fetch_formatted(device_id_val, loc_tz, loc_tz_str)
         _, last_refresh_utc = format_last_refresh_time(received_data, loc_tz, loc_tz_str)
         
-        wind_dir_compass = get_wind_direction_compass(received_data.get('wind_direction_10m'))
-        weather_obs_fmt = format_weather_observation_time(received_data.get('weather_observation_time'), loc_tz, loc_tz_str)
+        def f(key, unit):
+            val = safe_int(received_data.get(key))
+            return f"{val}{unit}" if val is not None else None
 
         transformed = {
-            'device_id': device_id,
-            'device_name': safe_string(received_data.get('n')),
-            'cell_id': safe_string(safe_int(received_data.get('ci'))),
-            'cell_mcc': safe_string(safe_int(received_data.get('mcc'))),
-            'cell_mnc': safe_string(safe_int(received_data.get('mnc'))),
-            'cell_tac': safe_string(received_data.get('tac')),
-            'cell_operator': safe_string(received_data.get('op')),
-            'network_type': safe_string(received_data.get('nt')),
-            'network_active': get_network_active(received_data),
-            'wifi_bssid': normalize_bssid(received_data.get('bssid')),
-            'gps_latitude': safe_string(safe_float(lat)),
-            'gps_longitude': safe_string(safe_float(lon)),
-            'weather_description': WEATHER_CODE_DESCRIPTIONS.get(safe_int(received_data.get('weather_code')), "Unknown"),
-            'weather_observation_time': weather_obs_fmt,
-            'weather_last_fetch_request_time': weather_fetch_fmt,
-            'gps_date_time': {'location_time': current_time or loc_time, 'location_timezone': loc_tz_str, 'location_date': loc_date},
-            'source_ip': safe_string(received_data.get('source_ip')),
-            'last_refresh_time_utc_reference': last_refresh_utc
+            "identity": {
+                "device_id": device_id_val,
+                "device_name": safe_string(received_data.get('n'))
+            },
+            "network": {
+                "cellular": {
+                    "operator": safe_string(received_data.get('op')),
+                    "mcc": safe_string(safe_int(received_data.get('mcc'))),
+                    "mnc": safe_string(safe_int(received_data.get('mnc'))),
+                    "cell_id": safe_string(safe_int(received_data.get('ci'))),
+                    "tac": safe_string(received_data.get('tac')),
+                    "signal_strength": f('rssi', ' dBm'),
+                    "type": safe_string(received_data.get('nt'))
+                },
+                "wifi": {"active": get_network_active(received_data), "bssid": normalize_bssid(received_data.get('bssid'))},
+                "bandwidth": {"download_capacity": f('dn', ' Mbps'), "upload_capacity": f('up', ' Mbps')},
+                "source_ip": safe_string(received_data.get('source_ip'))
+            },
+            "location": {
+                "coordinates": {
+                    "latitude": safe_string(safe_float(lat)), "longitude": safe_string(safe_float(lon)),
+                    "accuracy": f('acc', ' m'), "altitude": f('alt', ' m'), "speed": f('spd', ' km/h'),
+                },
+                "gps_date_time": {"date": loc_date, "time": loc_time, "timezone": loc_tz_str}
+            },
+            "environment": {
+                "weather": {
+                    "description": WEATHER_CODE_DESCRIPTIONS.get(safe_int(received_data.get('weather_code')), "Unknown"),
+                    "temperature": f('weather_temp', '°C'), "apparent_temp": f('weather_apparent_temp', '°C'),
+                    "humidity": f('weather_humidity', '%'), "precipitation": f('precipitation', ' mm'),
+                    "pressure_msl": f('pressure_msl', ' hPa'), "cloud_cover": f('cloud_cover', '%'),
+                    "wind": {
+                        "speed": f('wind_speed_10m', ' m/s'), "gusts": f('wind_gusts_10m', ' m/s'),
+                        "direction": get_wind_direction_compass(received_data.get('wind_direction_10m'))
+                    },
+                    "observation_time": format_weather_observation_time(received_data.get('weather_observation_time'), loc_tz, loc_tz_str),
+                    "last_fetch_request_time": weather_fetch_fmt
+                },
+                "marine": {
+                    "wave": {"height": f('marine_wave_height', ' m'), "direction": f('marine_wave_direction', '°'), "period": f('marine_wave_period', ' s')},
+                    "swell_wave": {"height": f('marine_swell_wave_height', ' m'), "direction": f('marine_swell_wave_direction', '°'), "period": f('marine_swell_wave_period', ' s')}
+                }
+            },
+            "power": {"battery": {"percent": f('perc', '%'), "total_capacity": f('cap', ' mAh')}},
+            "timestamps": {"last_refresh_time_utc": last_refresh_utc}
         }
-
-        numeric_fields = {
-            'perc': 'battery_percent', 'cap': 'battery_total_capacity', 'rssi': 'cell_signal_strength',
-            'acc': 'gps_accuracy', 'alt': 'gps_altitude', 'spd': 'gps_speed', 'dn': 'network_download_capacity',
-            'up': 'network_upload_capacity', 'weather_temp': 'weather_temperature', 'weather_humidity': 'weather_humidity',
-            'weather_apparent_temp': 'weather_apparent_temp', 'precipitation': 'weather_precipitation',
-            'pressure_msl': 'weather_pressure_msl', 'cloud_cover': 'weather_cloud_cover',
-            'wind_speed_10m': 'weather_wind_speed', 'wind_gusts_10m': 'weather_wind_gusts',
-            'marine_wave_height': 'marine_wave_height', 'marine_wave_direction': 'marine_wave_direction',
-            'marine_wave_period': 'marine_wave_period', 'marine_swell_wave_height': 'marine_swell_wave_height',
-            'marine_swell_wave_direction': 'marine_swell_wave_direction', 'marine_swell_wave_period': 'marine_swell_wave_period',
-        }
-        units = { 'perc': '%', 'cap': ' mAh', 'rssi': ' dBm', 'acc': ' m', 'alt': ' m', 'spd': ' km/h', 'dn': ' Mbps', 'up': ' Mbps', 'weather_temp': '°C', 'weather_humidity': '%', 'weather_apparent_temp': '°C', 'precipitation': ' mm', 'pressure_msl': ' hPa', 'cloud_cover': '%', 'wind_speed_10m': ' m/s', 'wind_gusts_10m': ' m/s', 'marine_wave_height': ' m', 'marine_wave_direction': '°', 'marine_wave_period': ' s', 'marine_swell_wave_height': ' m', 'marine_swell_wave_direction': '°', 'marine_swell_wave_period': ' s' }
-
-        for key, new_key in numeric_fields.items():
-            val = safe_int(received_data.get(key))
-            if val is not None:
-                transformed[new_key] = f"{val}{units.get(key, '')}"
         
         if (cap := safe_int(received_data.get('cap'))) is not None and (perc := safe_int(received_data.get('perc'))) is not None:
-            transformed['battery_leftover_calculated'] = f"{safe_int(cap * perc / 100)} mAh"
+            transformed['power']['battery']['leftover_calculated'] = f"{safe_int(cap * perc / 100)} mAh"
 
-        if wind_dir := get_wind_direction_compass(received_data.get('wind_direction_10m')):
-            transformed['weather_wind_direction'] = wind_dir
-
-        return {k: v for k, v in transformed.items() if v is not None and v != ""}
+        def cleanup_empty(d):
+            if not isinstance(d, dict): return d
+            cleaned_dict = {}
+            for k, v in d.items():
+                if isinstance(v, dict): v = cleanup_empty(v)
+                if v is not None and v != {} and v != '' and v != []: cleaned_dict[k] = v
+            return cleaned_dict
         
+        return cleanup_empty(transformed)
+
     except Exception as e:
-        print(f"Transform error details: {str(e)}")
         import traceback
+        print(f"Transform error details: {str(e)}")
         traceback.print_exc()
         raise e
