@@ -1,8 +1,8 @@
-from app.weather import WEATHER_CODE_DESCRIPTIONS
 from app.transforms import (
     safe_int, safe_float, get_wind_direction_compass, get_network_active,
     format_weather_observation_time, get_weather_fetch_formatted,
-    get_current_location_time, format_last_refresh_time, normalize_bssid
+    get_current_location_time, format_last_refresh_time, normalize_bssid,
+    WEATHER_CODE_DESCRIPTIONS
 )
 from app.shared.time.timezone_lookup import get_timezone_info_from_coordinates
 from .helpers import safe_string

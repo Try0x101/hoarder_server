@@ -5,7 +5,8 @@ from .device import (
     get_wind_direction_compass,
     get_network_active,
     format_weather_observation_time,
-    get_weather_fetch_formatted
+    get_weather_fetch_formatted,
+    WEATHER_CODE_DESCRIPTIONS
 )
 from app.shared.time.timezone_lookup import get_timezone_info_from_coordinates
 from app.shared.time.formatters import (
@@ -25,5 +26,6 @@ __all__ = [
     'get_current_location_time',
     'format_last_refresh_time',
     'get_timezone_info_from_coordinates',
-    'calculate_distance_km'
+    'calculate_distance_km',
+    'WEATHER_CODE_DESCRIPTIONS'
 ]
