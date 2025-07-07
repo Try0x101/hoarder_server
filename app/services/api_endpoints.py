@@ -2,7 +2,7 @@ import datetime
 from fastapi import Request
 from app.responses import PrettyJSONResponse
 from app.monitoring.system_monitor import SystemMonitor
-from app.websocket.manager import ConnectionManager
+from app.realtime.websocket.connection_manager import ConnectionManager
 from app.db import get_database_size, get_total_records_summary, get_top_devices_by_records
 
 def setup_api_endpoints(app, system_monitor: SystemMonitor, connection_manager: ConnectionManager):
@@ -16,9 +16,7 @@ def setup_api_endpoints(app, system_monitor: SystemMonitor, connection_manager: 
             records_summary = await get_total_records_summary()
             top_devices = await get_top_devices_by_records(limit=5)
         except Exception:
-            db_size = "unavailable"
-            records_summary = {"error": "database_unavailable"}
-            top_devices = []
+            db_size, records_summary, top_devices = "unavailable", {"error": "db_unavailable"}, []
 
         system_health = system_monitor.get_system_health()
         connection_stats = connection_manager.get_stats()
@@ -29,24 +27,19 @@ def setup_api_endpoints(app, system_monitor: SystemMonitor, connection_manager: 
             "status": system_health['health_status'],
             "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "system_health": {
-                "status": system_health['health_status'],
-                "score": system_health['health_score'],
+                "status": system_health['health_status'], "score": system_health['health_score'],
                 "uptime_seconds": system_health['uptime_seconds'],
                 "memory_usage_mb": system_health['memory_usage_mb'],
-                "total_requests": system_health['total_requests'],
-                "error_rate_percent": system_health['error_rate_percent']
             },
             "statistics": {
                 "average_response_time_ms": system_health['avg_response_time_ms'],
-                "database_size": db_size,
-                "total_records": records_summary,
+                "database_size": db_size, "total_records": records_summary,
                 "top_devices_by_records": top_devices,
                 "websocket_stats": connection_stats
             },
             "endpoints": {
                 "self": f"{base_url}/",
                 "latest_data_all_devices": f"{base_url}/data/latest",
-                "device_specific_latest_data": f"{base_url}/data/latest/{{device_id}}",
                 "device_history": f"{base_url}/data/history?device_id={{device_id}}",
                 "websocket": f"ws://{request.url.netloc}/socket.io/"
             }
