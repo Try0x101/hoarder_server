@@ -10,10 +10,10 @@ class SimpleRateLimiter:
         self.trackers: Dict[str, Dict] = {}
         self.last_cleanup = time.time()
         self.limits = {
-            'telemetry': {'rpm': 300, 'rph': 7200},
-            'batch': {'rpm': 10, 'rph': 100},
-            'api': {'rpm': 60, 'rph': 600},
-            'default': {'rpm': 30, 'rph': 300}
+            'telemetry': {'rpm': 900, 'rph': 21600},
+            'batch': {'rpm': 30, 'rph': 300},
+            'api': {'rpm': 180, 'rph': 1800},
+            'default': {'rpm': 90, 'rph': 900}
         }
     
     def _get_client_id(self, request: Request) -> str:
@@ -71,6 +71,7 @@ class SimpleRateLimiter:
                 content={
                     "error": "Rate limit exceeded",
                     "message": f"Too many requests per minute ({minute_requests}/{limits['rpm']})",
+                    "category": category,
                     "retry_after": 60
                 },
                 headers={"Retry-After": "60"}
@@ -82,6 +83,7 @@ class SimpleRateLimiter:
                 content={
                     "error": "Rate limit exceeded", 
                     "message": f"Too many requests per hour ({hour_requests}/{limits['rph']})",
+                    "category": category,
                     "retry_after": 3600
                 },
                 headers={"Retry-After": "3600"}

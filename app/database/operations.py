@@ -6,11 +6,12 @@ from typing import Optional, Dict, Any
 from .connection import get_pool
 from .partitions.manager import ensure_partition_exists
 from .helpers import sanitize_payload
-from app.cache import invalidate_cache, CACHE_KEY_LATEST_DATA
+from app.cache import invalidate_device_cache
 
 def safe_json_serialize(data: Any) -> str:
     try:
-        return json.dumps(sanitize_payload(data), ensure_ascii=False, separators=(',', ':'))
+        sanitized = sanitize_payload(data)
+        return json.dumps(sanitized, ensure_ascii=False, separators=(',', ':'))
     except (TypeError, ValueError) as e:
         print(f"[{datetime.datetime.now(datetime.timezone.utc)}] JSON serialization error: {e}")
         
@@ -38,6 +39,32 @@ def extract_device_id(data: Dict[str, Any]) -> Optional[str]:
     
     return None
 
+def prepare_state_merge_data(new_data: dict) -> dict:
+    merge_data = {}
+    
+    for key, value in new_data.items():
+        if key in ['received_at', 'server_received_at']:
+            continue
+            
+        if value is None:
+            continue
+            
+        if isinstance(value, str) and value.strip().lower() in ['null', 'none', 'undefined', '']:
+            continue
+            
+        if isinstance(value, dict):
+            cleaned_dict = {k: v for k, v in value.items() if v is not None}
+            if cleaned_dict:
+                merge_data[key] = cleaned_dict
+        elif isinstance(value, list):
+            cleaned_list = [item for item in value if item is not None]
+            if cleaned_list:
+                merge_data[key] = cleaned_list
+        else:
+            merge_data[key] = value
+    
+    return merge_data
+
 async def upsert_latest_state(data: dict):
     device_id = extract_device_id(data)
     if not device_id:
@@ -47,21 +74,42 @@ async def upsert_latest_state(data: dict):
     try:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            payload_json = safe_json_serialize(data)
+            merge_data = prepare_state_merge_data(data)
+            if not merge_data:
+                print(f"[{datetime.datetime.now(datetime.timezone.utc)}] WARNING: No valid data to merge for device {device_id}")
+                return
+                
+            payload_json = safe_json_serialize(merge_data)
             
-            await conn.execute(
-                """
-                INSERT INTO latest_device_states(device_id, payload, received_at)
-                VALUES($1, $2, now())
-                ON CONFLICT(device_id) DO UPDATE
-                SET payload = jsonb_recursive_merge(latest_device_states.payload, EXCLUDED.payload),
-                    received_at = EXCLUDED.received_at;
-                """,
-                device_id, payload_json
-            )
+            async with conn.transaction():
+                existing_row = await conn.fetchrow(
+                    "SELECT payload FROM latest_device_states WHERE device_id = $1 FOR UPDATE",
+                    device_id, timeout=10
+                )
+                
+                if existing_row:
+                    try:
+                        existing_data = json.loads(existing_row['payload'])
+                        merged_data = deep_merge_safe(existing_data, merge_data)
+                        final_payload = safe_json_serialize(merged_data)
+                    except Exception as e:
+                        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Merge error for {device_id}: {e}")
+                        final_payload = payload_json
+                else:
+                    final_payload = payload_json
+                
+                await conn.execute(
+                    """
+                    INSERT INTO latest_device_states(device_id, payload, received_at)
+                    VALUES($1, $2, now())
+                    ON CONFLICT(device_id) DO UPDATE SET
+                    payload = EXCLUDED.payload,
+                    received_at = EXCLUDED.received_at
+                    """,
+                    device_id, final_payload, timeout=10
+                )
             
-            await invalidate_cache(CACHE_KEY_LATEST_DATA)
-            await invalidate_cache(f"latest_data_raw_{device_id}")
+            await invalidate_device_cache(device_id)
             
     except asyncpg.exceptions.DataError as e:
         print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DATA ERROR in upsert_latest_state: {str(e)}")
@@ -73,23 +121,55 @@ async def upsert_latest_state(data: dict):
                 'received_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'raw_data_size': len(str(data))
             }
-            payload_json = json.dumps(minimal_data)
+            payload_json = json.dumps(minimal_data, separators=(',', ':'))
             
             async with pool.acquire() as conn:
                 await conn.execute(
                     """
                     INSERT INTO latest_device_states(device_id, payload, received_at)
                     VALUES($1, $2, now())
-                    ON CONFLICT(device_id) DO UPDATE
-                    SET payload = EXCLUDED.payload, received_at = EXCLUDED.received_at;
+                    ON CONFLICT(device_id) DO UPDATE SET
+                    payload = EXCLUDED.payload, received_at = EXCLUDED.received_at
                     """,
-                    device_id, payload_json
+                    device_id, payload_json, timeout=10
                 )
         except Exception as fallback_error:
             print(f"[{datetime.datetime.now(datetime.timezone.utc)}] FALLBACK ERROR: {str(fallback_error)}")
             
     except Exception as e:
         print(f"[{datetime.datetime.now(datetime.timezone.utc)}] CRITICAL ERROR in upsert_latest_state: {str(e)}")
+
+def deep_merge_safe(existing: dict, new_data: dict) -> dict:
+    try:
+        result = existing.copy()
+        
+        for key, new_value in new_data.items():
+            if key not in result:
+                result[key] = new_value
+                continue
+                
+            existing_value = result[key]
+            
+            if isinstance(new_value, dict) and isinstance(existing_value, dict):
+                result[key] = deep_merge_safe(existing_value, new_value)
+            elif isinstance(new_value, list) and isinstance(existing_value, list):
+                if len(new_value) > len(existing_value):
+                    result[key] = new_value
+                else:
+                    combined = existing_value.copy()
+                    for i, item in enumerate(new_value):
+                        if i < len(combined):
+                            combined[i] = item
+                        else:
+                            combined.append(item)
+                    result[key] = combined
+            else:
+                result[key] = new_value
+        
+        return result
+    except Exception as e:
+        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Deep merge error: {e}")
+        return {**existing, **new_data}
 
 async def save_timestamped_data(data: dict, data_timestamp: Optional[datetime.datetime] = None, is_offline: bool = False, batch_id: Optional[str] = None):
     device_id = extract_device_id(data)
@@ -113,7 +193,7 @@ async def save_timestamped_data(data: dict, data_timestamp: Optional[datetime.da
         async with pool.acquire() as conn:
             await conn.execute(
                 "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6)",
-                device_id, payload_json, ts, data_type, is_offline, safe_batch_id
+                device_id, payload_json, ts, data_type, is_offline, safe_batch_id, timeout=15
             )
             
     except asyncpg.exceptions.UndefinedTableError:
@@ -121,7 +201,7 @@ async def save_timestamped_data(data: dict, data_timestamp: Optional[datetime.da
         async with (await get_pool()).acquire() as conn:
             await conn.execute(
                 "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6)",
-                device_id, payload_json, ts, data_type, is_offline, safe_batch_id
+                device_id, payload_json, ts, data_type, is_offline, safe_batch_id, timeout=15
             )
             
     except asyncpg.exceptions.DataError as e:
@@ -135,12 +215,12 @@ async def save_timestamped_data(data: dict, data_timestamp: Optional[datetime.da
                 'raw_data_size': len(str(data)),
                 'batch_id': safe_batch_id
             }
-            fallback_json = json.dumps(minimal_data)
+            fallback_json = json.dumps(minimal_data, separators=(',', ':'))
             
             async with pool.acquire() as conn:
                 await conn.execute(
                     "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6)",
-                    device_id, fallback_json, ts, "error_fallback", is_offline, safe_batch_id
+                    device_id, fallback_json, ts, "error_fallback", is_offline, safe_batch_id, timeout=15
                 )
         except Exception as fallback_error:
             print(f"[{datetime.datetime.now(datetime.timezone.utc)}] FALLBACK ERROR: {str(fallback_error)}")
