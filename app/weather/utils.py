@@ -17,55 +17,39 @@ async def enrich_with_weather_data(data: dict) -> dict:
     from app.device_tracker import should_force_weather_update, cleanup_old_device_data
     from app.services.weather.coordinator import get_weather_data
 
-    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Starting weather enrichment")
-    
     lat = data.get('lat')
     lon = data.get('lon')
     device_id = safe_device_id_extraction(data)
     
-    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Device {device_id} - raw coordinates: lat={lat}, lon={lon}")
-
     lat_float, lon_float, validation_msg = robust_coordinate_validation(lat, lon)
     
-    if lat_float is None or lon_float is None:
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Coordinate validation failed: {validation_msg}")
+    if lat_float is None or lon_float is None or not device_id:
         return data
-    
-    if not device_id:
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: No valid device_id found, skipping weather enrichment")
-        return data
-
-    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Device {device_id} - validated coordinates: lat={lat_float}, lon={lon_float}")
 
     try:
         force_update, reason = await should_force_weather_update(device_id, lat_float, lon_float)
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Device {device_id} - force_update: {force_update} (reason: {reason})")
 
         if hash(str(device_id)) % 100 == 0:
             cleanup_old_device_data()
 
         if force_update:
-            print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Fetching weather data for {lat_float}, {lon_float}")
             weather_data = await get_weather_data(lat_float, lon_float)
             
             if weather_data and isinstance(weather_data, dict):
                 valid_weather_keys = [k for k, v in weather_data.items() if v is not None and str(v).strip()]
                 if valid_weather_keys:
                     data.update(weather_data)
-                    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] SUCCESS: Weather data added for device {device_id}")
-                    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Added keys: {valid_weather_keys}")
+                    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] SUCCESS: Weather data added for device {device_id} (reason: {reason})")
                 else:
-                    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] WARNING: Weather data returned but all values null/empty")
+                    print(f"[{datetime.datetime.now(datetime.timezone.utc)}] WARNING: Weather data for {device_id} returned empty")
             else:
-                print(f"[{datetime.datetime.now(datetime.timezone.utc)}] WARNING: No valid weather data returned for device {device_id}")
-        else:
-            print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Using cached weather data (reason: {reason})")
-            
+                print(f"[{datetime.datetime.now(datetime.timezone.utc)}] WARNING: No valid weather data for {device_id} (reason: {reason})")
+        
     except (ValueError, TypeError) as e:
         print(f"[{datetime.datetime.now(datetime.timezone.utc)}] ERROR: Coordinate processing error: lat={lat}, lon={lon}, error={e}")
     except Exception as e:
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] ERROR: Unexpected error in weather enrichment: {e}")
+        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] ERROR: Unexpected error in weather enrichment for {device_id}: {e}")
         import traceback
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] DEBUG: Traceback: {traceback.format_exc()}")
+        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] Traceback: {traceback.format_exc()}")
 
     return data
