@@ -1,7 +1,8 @@
 import datetime
 from fastapi import Request, HTTPException
 from fastapi.responses import StreamingResponse
-from app.validation import decode_raw_data
+from app.processing.validation.decoders import decode_raw_data
+from app.processing.validation.validators import validate_device_data
 from app.batch import BatchMemoryManager, StreamProcessor, DeltaProcessor
 from app.responses import PrettyJSONResponse
 from .validation import validate_batch_structure
@@ -46,7 +47,6 @@ async def handle_batch_upload(request: Request):
         raise HTTPException(status_code=400, detail=f"Invalid data format: {str(e)}")
 
     validation_result = validate_batch_structure(batch_data, "batch")
-
     batch_id = f"batch_{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}_{hash(str(request.client.host)) % 10000:04d}"
     request_metadata = extract_request_metadata(request)
 
@@ -84,7 +84,6 @@ async def handle_delta_batch(request: Request):
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
 
     validation_result = validate_batch_structure(delta_batch, "delta batch")
-
     is_valid, message = delta_processor.validate_delta_batch(delta_batch)
     if not is_valid:
         raise HTTPException(status_code=400, detail=f"Delta validation failed: {message}")

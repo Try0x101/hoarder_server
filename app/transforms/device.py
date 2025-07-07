@@ -21,7 +21,6 @@ def normalize_bssid(bssid_value):
 
 def get_network_active(received_data):
     bssid = normalize_bssid(received_data.get('bssid'))
-    # A BSSID of "0" is not valid for identifying a network, but should be displayed if sent.
     if bssid is not None and bssid != "0":
         return 'Wi-Fi'
     return received_data.get('nt')

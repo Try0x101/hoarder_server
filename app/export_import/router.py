@@ -2,9 +2,14 @@ import os
 import uuid
 from fastapi import APIRouter, HTTPException, BackgroundTasks, File, UploadFile, Form, Request
 from fastapi.responses import FileResponse
-from .constants import EXPORT_DIR, IMPORT_DIR
-from .status import update_status
 from .service import perform_export, perform_import
+from .status import update_status
+
+EXPORT_DIR = "/tmp/hoarder_exports"
+IMPORT_DIR = "/tmp/hoarder_imports"
+
+os.makedirs(EXPORT_DIR, exist_ok=True)
+os.makedirs(IMPORT_DIR, exist_ok=True)
 
 router = APIRouter(prefix="/export_import", tags=["Export/Import"])
 

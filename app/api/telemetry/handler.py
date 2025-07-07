@@ -2,7 +2,9 @@ import datetime
 import psutil
 from fastapi import Request, HTTPException
 from app.responses import PrettyJSONResponse
-from app.validation import decode_raw_data, decode_maximum_compression, validate_device_data
+from app.processing.validation.decoders import decode_raw_data
+from app.processing.validation.binary_decoder import decode_maximum_compression
+from app.processing.validation.validators import validate_device_data
 from app.tasks import PriorityQueueManager, TaskPriority, AdaptiveTimeoutManager
 from .client_info import extract_client_info
 from .timestamp_parser import parse_device_timestamp
@@ -87,8 +89,6 @@ async def handle_telemetry_request(request: Request):
         "processing": {
             "degradation_mode": degradation_mode,
             "critical_task_enqueued": critical_enqueued,
-            "state_task_enqueued": state_enqueued,
-            **priority_queue_manager.get_stats(),
-            **timeout_manager.get_timeout_stats(queue_pressure)
+            "state_task_enqueued": state_enqueued
         }
     }

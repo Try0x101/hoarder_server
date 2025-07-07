@@ -45,8 +45,6 @@ async def perform_import(import_file: str, status_file: str, merge: bool):
             
             for table, rows in data["data"].items():
                 for row in rows:
-                    # Simplified import logic for brevity
-                    # In a real scenario, this would be more robust
                     cols = ", ".join(row.keys())
                     vals = ", ".join([f"${i+1}" for i in range(len(row))])
                     query = f"INSERT INTO {table} ({cols}) VALUES ({vals}) ON CONFLICT DO NOTHING"

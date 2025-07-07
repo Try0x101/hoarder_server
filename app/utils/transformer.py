@@ -48,7 +48,6 @@ async def transform_device_data(received_data):
             'last_refresh_time_utc_reference': last_refresh_utc
         }
 
-        # Numeric fields with units, correctly handling 0
         numeric_fields = {
             'perc': 'battery_percent', 'cap': 'battery_total_capacity', 'rssi': 'cell_signal_strength',
             'acc': 'gps_accuracy', 'alt': 'gps_altitude', 'spd': 'gps_speed', 'dn': 'network_download_capacity',

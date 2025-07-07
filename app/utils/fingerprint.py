@@ -118,18 +118,3 @@ def safe_device_id(device_id_value, source_ip=None, user_agent=None, payload_dat
     ]
     
     return f"fallback_{'_'.join(fallback_components)}"[:50]
-
-def validate_device_id_consistency(device_id, source_ip, payload_data):
-    if not device_id or not device_id.startswith('auto_'):
-        return True, "manual_id"
-    
-    expected_fingerprint = create_device_fingerprint(source_ip, None, payload_data)
-    
-    if device_id == expected_fingerprint:
-        return True, "consistent_fingerprint"
-    
-    base_ip = normalize_ip_address(source_ip)
-    if base_ip in device_id:
-        return True, "ip_based_match"
-    
-    return False, "inconsistent_fingerprint"

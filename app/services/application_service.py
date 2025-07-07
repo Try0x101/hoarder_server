@@ -4,8 +4,6 @@ from app.core.application import create_app
 from app.core.startup import startup_handler, shutdown_handler, periodic_maintenance_task
 from app.realtime.websocket.connection_manager import ConnectionManager
 from app.realtime.timezone.manager import SharedTimezoneManager
-from app.monitoring.system_monitor import SystemMonitor
-from app.shared.memory.manager import GlobalMemoryManager
 from app.middleware.rate_limiter import rate_limit_middleware
 from .websocket_handlers import setup_websocket_events
 from .api_endpoints import setup_api_endpoints
@@ -19,45 +17,18 @@ def create_socket_app():
     
     connection_manager = ConnectionManager()
     shared_timezone_manager = SharedTimezoneManager()
-    system_monitor = SystemMonitor()
     
-    setup_monitoring_middleware(app, system_monitor)
-    setup_api_endpoints(app, system_monitor, connection_manager)
+    setup_api_endpoints(app, connection_manager)
     setup_websocket_events(sio, connection_manager, shared_timezone_manager)
-    setup_lifecycle_events(app, sio, connection_manager, shared_timezone_manager, system_monitor)
+    setup_lifecycle_events(app, sio, connection_manager, shared_timezone_manager)
     
     return socket_app
 
-def setup_monitoring_middleware(app, system_monitor):
-    @app.middleware("http")
-    async def monitoring_middleware(request, call_next):
-        import time
-        start_time = time.time()
-        
-        try:
-            response = await call_next(request)
-            process_time = time.time() - start_time
-            
-            endpoint = f"{request.method} {request.url.path}"
-            system_monitor.record_request(endpoint, process_time, response.status_code)
-            
-            response.headers["X-Process-Time"] = f"{process_time:.4f}"
-            response.headers["X-Server-Health"] = system_monitor.health_status
-            
-            return response
-            
-        except Exception as e:
-            process_time = time.time() - start_time
-            endpoint = f"{request.method} {request.url.path}"
-            system_monitor.record_request(endpoint, process_time, 500)
-            system_monitor.add_alert(f"Request failed: {endpoint} - {str(e)}")
-            raise
-
-def setup_lifecycle_events(app, sio, connection_manager, shared_timezone_manager, system_monitor):
+def setup_lifecycle_events(app, sio, connection_manager, shared_timezone_manager):
     @app.on_event("startup")
     async def startup():
-        await startup_handler(system_monitor)
-        asyncio.create_task(periodic_maintenance_task(sio, connection_manager, shared_timezone_manager, system_monitor))
+        await startup_handler()
+        asyncio.create_task(periodic_maintenance_task(sio, connection_manager, shared_timezone_manager))
 
     @app.on_event("shutdown")
     async def shutdown():

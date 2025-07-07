@@ -1,7 +1,6 @@
 import datetime
 from typing import Optional, Dict, Any
-
-from app.validation import robust_coordinate_validation
+from app.processing.validation.validators import robust_coordinate_validation
 
 def safe_device_id_extraction(data: dict) -> Optional[str]:
     id_fields = ['id', 'device_id', 'deviceId', 'device', 'dev_id']

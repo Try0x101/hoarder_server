@@ -1,11 +1,10 @@
 import datetime
 from fastapi import Request
 from app.responses import PrettyJSONResponse
-from app.monitoring.system_monitor import SystemMonitor
 from app.realtime.websocket.connection_manager import ConnectionManager
 from app.db import get_database_size, get_total_records_summary, get_top_devices_by_records
 
-def setup_api_endpoints(app, system_monitor: SystemMonitor, connection_manager: ConnectionManager):
+def setup_api_endpoints(app, connection_manager: ConnectionManager):
     
     @app.get("/", response_class=PrettyJSONResponse)
     async def root_endpoints(request: Request):
@@ -18,22 +17,16 @@ def setup_api_endpoints(app, system_monitor: SystemMonitor, connection_manager: 
         except Exception:
             db_size, records_summary, top_devices = "unavailable", {"error": "db_unavailable"}, []
 
-        system_health = system_monitor.get_system_health()
         connection_stats = connection_manager.get_stats()
 
         return {
             "server": "Hoarder Server - Advanced IoT Telemetry Platform",
             "version": "3.3.0",
-            "status": system_health['health_status'],
+            "status": "healthy",
             "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "system_health": {
-                "status": system_health['health_status'], "score": system_health['health_score'],
-                "uptime_seconds": system_health['uptime_seconds'],
-                "memory_usage_mb": system_health['memory_usage_mb'],
-            },
             "statistics": {
-                "average_response_time_ms": system_health['avg_response_time_ms'],
-                "database_size": db_size, "total_records": records_summary,
+                "database_size": db_size,
+                "total_records": records_summary,
                 "top_devices_by_records": top_devices,
                 "websocket_stats": connection_stats
             },

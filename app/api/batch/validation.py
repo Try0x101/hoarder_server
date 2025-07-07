@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from app.validation import validate_device_data
+from app.processing.validation.validators import validate_device_data
 
 def validate_batch_structure(data, batch_type="batch"):
     if not isinstance(data, list):

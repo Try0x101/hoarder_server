@@ -7,8 +7,6 @@ from app.weather import enrich_with_weather_data
 from app.db import save_timestamped_data, upsert_latest_state
 from .memory_manager import BatchMemoryManager
 
-MEMORY_CHECK_INTERVAL = 5
-
 class StreamProcessor:
     def __init__(self, memory_manager: BatchMemoryManager):
         self.memory_manager = memory_manager
@@ -70,7 +68,7 @@ class StreamProcessor:
                     chunk_size = self.memory_manager.get_adaptive_chunk_size()
                     yield f"data: {json.dumps({'chunk_size_adjusted': chunk_size, 'pressure': current_pressure})}\n\n"
 
-                if processed % MEMORY_CHECK_INTERVAL == 0:
+                if processed % 5 == 0:
                     await self.memory_manager.update_batch_progress(batch_id, processed)
             
             final_memory = psutil.Process().memory_info().rss / 1024 / 1024
@@ -117,10 +115,3 @@ class StreamProcessor:
                 await upsert_latest_state(item)
         else:
             await upsert_latest_state(item)
-
-    def get_processor_stats(self):
-        return {
-            'memory_stats': self.memory_manager.get_memory_stats(),
-            'system_pressure': self.memory_manager.get_system_memory_pressure(),
-            'adaptive_chunk_size': self.memory_manager.get_adaptive_chunk_size()
-        }

@@ -1,6 +1,5 @@
 import time
-import asyncio
-from typing import Dict, Optional
+from typing import Dict
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from collections import defaultdict
@@ -48,7 +47,7 @@ class SimpleRateLimiter:
         
         self.last_cleanup = current_time
     
-    async def check_rate_limit(self, request: Request) -> Optional[JSONResponse]:
+    async def check_rate_limit(self, request: Request):
         current_time = time.time()
         self._cleanup_old_trackers(current_time)
         
@@ -68,36 +67,19 @@ class SimpleRateLimiter:
         if minute_requests >= limits['rpm']:
             return JSONResponse(
                 status_code=429,
-                content={
-                    "error": "Rate limit exceeded",
-                    "message": f"Too many requests per minute ({minute_requests}/{limits['rpm']})",
-                    "category": category,
-                    "retry_after": 60
-                },
+                content={"error": "Rate limit exceeded", "retry_after": 60},
                 headers={"Retry-After": "60"}
             )
         
         if hour_requests >= limits['rph']:
             return JSONResponse(
                 status_code=429,
-                content={
-                    "error": "Rate limit exceeded", 
-                    "message": f"Too many requests per hour ({hour_requests}/{limits['rph']})",
-                    "category": category,
-                    "retry_after": 3600
-                },
+                content={"error": "Rate limit exceeded", "retry_after": 3600},
                 headers={"Retry-After": "3600"}
             )
         
         tracker['requests'].append(current_time)
         return None
-    
-    def get_stats(self):
-        return {
-            'total_clients': len(self.trackers),
-            'active_clients': len([t for t in self.trackers.values() if t['requests']]),
-            'limits': self.limits
-        }
 
 rate_limiter = SimpleRateLimiter()
 
@@ -107,8 +89,4 @@ async def rate_limit_middleware(request: Request, call_next):
         return rate_limit_response
     
     response = await call_next(request)
-    
-    stats = rate_limiter.get_stats()
-    response.headers["X-RateLimit-Clients"] = str(stats["total_clients"])
-    
     return response

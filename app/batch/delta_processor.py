@@ -48,8 +48,6 @@ class DeltaProcessor:
         async with self.device_locks[device_id]:
             try:
                 base_payload = await self._get_device_base_state(conn, device_id)
-                
-                # Use the robust deep_merge, same as the full-payload endpoint
                 reconstructed = deep_merge(delta, base_payload)
                 reconstructed.update({'batch_id': batch_id, 'source_ip': source_ip, 'user_agent': user_agent, 'data_type': 'delta'})
                 
@@ -64,7 +62,6 @@ class DeltaProcessor:
                         "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, 'delta', true, $4) ON CONFLICT (device_id, data_timestamp) DO NOTHING",
                         device_id, final_payload, data_timestamp, batch_id
                     )
-                    # Use a full replacement, same as the full-payload endpoint
                     await conn.execute(
                         "INSERT INTO latest_device_states(device_id, payload, received_at) VALUES($1, $2, now()) ON CONFLICT(device_id) DO UPDATE SET payload = EXCLUDED.payload, received_at = EXCLUDED.received_at",
                         device_id, final_payload
@@ -85,7 +82,7 @@ class DeltaProcessor:
         state = json.loads(row['payload']) if row and row['payload'] else {}
         self.device_states_cache[device_id] = {'state': state, 'timestamp': time.time()}
         
-        if len(self.device_states_cache) > 20: # MAX_DEVICE_STATES_CACHE
+        if len(self.device_states_cache) > 20:
             oldest_key = min(self.device_states_cache, key=lambda k: self.device_states_cache[k]['timestamp'])
             del self.device_states_cache[oldest_key]
         return state.copy()
@@ -106,11 +103,3 @@ class DeltaProcessor:
         if sum(1 for d in deltas if not d.get('id')) > len(deltas) * 0.1:
             return False, "Too many deltas missing device ID"
         return True, "Valid delta batch"
-
-    def get_delta_stats(self):
-        return {
-            'memory_stats': self.memory_manager.get_memory_stats(),
-            'system_pressure': self.memory_manager.get_system_memory_pressure(),
-            'device_locks_active': len(self.device_locks),
-            'device_states_cached': len(self.device_states_cache)
-        }
