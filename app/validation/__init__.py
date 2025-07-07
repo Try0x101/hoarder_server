@@ -1,6 +1,6 @@
 from app.processing.validation.decoders import decode_raw_data
 from app.processing.validation.binary_decoder import decode_maximum_compression
-from app.processing.validation.validators import validate_coordinates, validate_device_data
+from app.processing.validation.validators import validate_coordinates, validate_device_data, robust_coordinate_validation
 
 def deep_merge(source: dict, destination: dict) -> dict:
     for key, value in source.items():
@@ -40,5 +40,6 @@ __all__ = [
     'validate_coordinates',
     'validate_device_data',
     'sanitize_payload_for_cache',
-    'extract_metadata_from_payload'
+    'extract_metadata_from_payload',
+    'robust_coordinate_validation'
 ]

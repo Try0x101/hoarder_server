@@ -25,22 +25,28 @@ class ConnectionManager:
         real_ip = environ.get('HTTP_X_REAL_IP', '')
         return forwarded or real_ip or environ.get('REMOTE_ADDR', 'unknown')
 
-    async def can_accept_connection(self, sid: str, environ: dict) -> bool:
-        if len(self.connections) >= MAX_CONNECTIONS: return False
+    async def can_accept_connection(self, environ: dict) -> bool:
+        if len(self.connections) >= MAX_CONNECTIONS:
+            return False
         
         client_ip = self._get_client_ip(environ)
-        if self.ip_counts.get(client_ip, 0) >= CONNECTION_RATE_LIMIT: return False
+        if self.ip_counts.get(client_ip, 0) >= CONNECTION_RATE_LIMIT:
+            return False
         
         memory_mb = self.get_memory_usage_mb()
         if memory_mb > AGGRESSIVE_THRESHOLD_MB:
             await self._cleanup(None, aggressive=True)
-            if self.get_memory_usage_mb() > AGGRESSIVE_THRESHOLD_MB: return False
+            if self.get_memory_usage_mb() > AGGRESSIVE_THRESHOLD_MB:
+                return False
         elif memory_mb > MEMORY_THRESHOLD_MB:
             return False
+        
+        return True
 
+    def add_connection(self, sid: str, environ: dict):
+        client_ip = self._get_client_ip(environ)
         self.connections[sid] = {'connected_at': time.time(), 'last_ping': time.time(), 'client_ip': client_ip}
         self.ip_counts[client_ip] = self.ip_counts.get(client_ip, 0) + 1
-        return True
 
     async def remove_connection(self, sid: str):
         conn_data = self.connections.pop(sid, None)
@@ -68,11 +74,6 @@ class ConnectionManager:
     
     def update_ping(self, sid: str):
         if sid in self.connections: self.connections[sid]['last_ping'] = time.time()
-
-    async def periodic_cleanup(self, sio):
-        if time.time() - self.last_cleanup > 30:
-            await self._cleanup(sio)
-            self.last_cleanup = time.time()
 
     async def _cleanup(self, sio, aggressive: bool = False):
         timeout = 60 if aggressive else CONNECTION_TIMEOUT

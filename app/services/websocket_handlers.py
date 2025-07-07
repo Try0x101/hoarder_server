@@ -8,17 +8,22 @@ def setup_websocket_events(sio, connection_manager: ConnectionManager, shared_ti
     
     @sio.event
     async def connect(sid, environ):
-        client_ip = connection_manager._get_client_ip(environ)
-        
-        if not await connection_manager.can_accept_connection(client_ip):
+        if not await connection_manager.can_accept_connection(environ):
             await sio.disconnect(sid)
             return False
         
         connection_manager.add_connection(sid, environ)
+        client_ip = connection_manager._get_client_ip(environ)
         print(f"[{datetime.datetime.now()}] WebSocket connected: {sid} from {client_ip} ({len(connection_manager.connections)} total)")
 
     @sio.event
     async def disconnect(sid):
+        connection_data = connection_manager.connections.get(sid, {})
+        coord_key = connection_data.get('coord_key')
+        
+        if coord_key:
+            await shared_timezone_manager.unsubscribe_connection(sid, coord_key)
+        
         await connection_manager.remove_connection(sid)
         print(f"[{datetime.datetime.now()}] WebSocket disconnected: {sid}")
 
@@ -28,9 +33,7 @@ def setup_websocket_events(sio, connection_manager: ConnectionManager, shared_ti
 
     @sio.on("register_device")
     async def register_device(sid, device_id):
-        if not await connection_manager.register_device(sid, device_id):
-            return
-            
+        await connection_manager.register_device(sid, device_id)
         print(f"[{datetime.datetime.now()}] Device {device_id} registered for updates on {sid}")
         
         try:

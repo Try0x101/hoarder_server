@@ -106,3 +106,11 @@ class DeltaProcessor:
         if sum(1 for d in deltas if not d.get('id')) > len(deltas) * 0.1:
             return False, "Too many deltas missing device ID"
         return True, "Valid delta batch"
+
+    def get_delta_stats(self):
+        return {
+            'memory_stats': self.memory_manager.get_memory_stats(),
+            'system_pressure': self.memory_manager.get_system_memory_pressure(),
+            'device_locks_active': len(self.device_locks),
+            'device_states_cached': len(self.device_states_cache)
+        }
