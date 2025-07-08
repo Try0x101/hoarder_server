@@ -1,71 +1,86 @@
 import json
 import datetime
-import asyncpg
-from typing import Optional, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple
+from .connection import safe_db_operation
 
-from .connection import get_pool
-from .partitions.manager import ensure_partition_exists
-from .helpers import safe_json_serialize, extract_device_id, sanitize_payload, deep_merge
-from app.cache import invalidate_device_cache
-
-async def upsert_latest_state(data: dict):
-    device_id = extract_device_id(data)
-    if not device_id: return
-
-    sanitized_data = sanitize_payload(data)
-    merge_data = {k: v for k, v in sanitized_data.items() if k not in ['received_at', 'server_received_at']}
-    if not merge_data: return
-
-    try:
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                existing_row = await conn.fetchrow(
-                    "SELECT payload FROM latest_device_states WHERE device_id = $1 FOR UPDATE",
-                    device_id, timeout=10
-                )
-                existing_data = json.loads(existing_row['payload']) if (existing_row and existing_row['payload']) else {}
-                merged_data = deep_merge(merge_data, existing_data)
-                final_payload = safe_json_serialize(merged_data)
-                await conn.execute(
-                    """
-                    INSERT INTO latest_device_states(device_id, payload, received_at) VALUES($1, $2, now())
-                    ON CONFLICT(device_id) DO UPDATE SET
-                    payload = EXCLUDED.payload, received_at = EXCLUDED.received_at
-                    """,
-                    device_id, final_payload, timeout=10
-                )
-        await invalidate_device_cache(device_id)
-    except Exception as e:
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] CRITICAL ERROR in upsert for {device_id}: {e}")
-
-async def save_timestamped_data(
-    data: dict, data_timestamp: Optional[datetime.datetime] = None, 
-    is_offline: bool = False, batch_id: Optional[str] = None
-):
-    device_id = extract_device_id(data)
-    if not device_id: return
-
-    ts = data_timestamp or datetime.datetime.now(datetime.timezone.utc)
-    if ts.tzinfo is None: ts = ts.replace(tzinfo=datetime.timezone.utc)
+async def get_latest_device_data() -> List[Dict[str, Any]]:
+    async def query_operation(conn):
+        rows = await conn.fetch(
+            "SELECT device_id, payload, received_at FROM latest_device_states ORDER BY received_at DESC"
+        )
+        result = []
+        for row in rows:
+            try:
+                payload = json.loads(row['payload']) if isinstance(row['payload'], str) else row['payload']
+                result.append({
+                    "device_id": row['device_id'],
+                    "payload": payload,
+                    "received_at": row['received_at'].isoformat() if row['received_at'] else None
+                })
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return result
     
-    payload_json = safe_json_serialize(data)
-    data_type = str(data.get("data_type", "delta"))[:50]
-    safe_batch_id = str(batch_id)[:100] if batch_id else None
+    return await safe_db_operation(query_operation)
 
-    try:
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6)",
-                device_id, payload_json, ts, data_type, is_offline, safe_batch_id, timeout=15
-            )
-    except asyncpg.exceptions.UndefinedTableError:
-        await ensure_partition_exists(ts)
-        async with (await get_pool()).acquire() as conn:
-            await conn.execute(
-                "INSERT INTO timestamped_data(device_id, payload, data_timestamp, data_type, is_offline, batch_id) VALUES($1, $2, $3, $4, $5, $6)",
-                device_id, payload_json, ts, data_type, is_offline, safe_batch_id, timeout=15
-            )
-    except Exception as e:
-        print(f"[{datetime.datetime.now(datetime.timezone.utc)}] ERROR in save_timestamped_data for {device_id}: {e}")
+async def get_device_latest_data(device_id: str) -> Optional[Dict[str, Any]]:
+    async def query_operation(conn):
+        row = await conn.fetchrow(
+            "SELECT payload, received_at FROM latest_device_states WHERE device_id = $1",
+            device_id
+        )
+        if not row:
+            return None
+        try:
+            payload = json.loads(row['payload']) if isinstance(row['payload'], str) else row['payload']
+            return {
+                "device_id": device_id,
+                "payload": payload,
+                "received_at": row['received_at'].isoformat() if row['received_at'] else None
+            }
+        except (json.JSONDecodeError, TypeError):
+            return None
+    
+    return await safe_db_operation(query_operation)
+
+async def get_device_history(device_id: str, days: int = 30, limit: int = 100, cursor: Optional[str] = None) -> Tuple[List[Dict], Optional[str]]:
+    async def query_operation(conn):
+        cutoff_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        query = "SELECT payload, data_timestamp FROM timestamped_data WHERE device_id = $1 AND data_timestamp >= $2"
+        params = [device_id, cutoff_date]
+        
+        if cursor:
+            query += " AND data_timestamp < $3"
+            params.append(datetime.datetime.fromisoformat(cursor))
+        
+        query += " ORDER BY data_timestamp DESC LIMIT $" + str(len(params) + 1)
+        params.append(limit)
+        
+        rows = await conn.fetch(query, *params)
+        
+        result = []
+        for row in rows:
+            try:
+                payload = json.loads(row['payload']) if isinstance(row['payload'], str) else row['payload']
+                result.append({
+                    "payload": payload,
+                    "timestamp": row['data_timestamp'].isoformat()
+                })
+            except (json.JSONDecodeError, TypeError):
+                continue
+        
+        next_cursor = rows[-1]['data_timestamp'].isoformat() if len(rows) == limit else None
+        return result, next_cursor
+    
+    return await safe_db_operation(query_operation)
+
+async def get_active_devices(days: int = 30) -> List[Dict[str, Any]]:
+    async def query_operation(conn):
+        cutoff_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        rows = await conn.fetch(
+            "SELECT device_id, received_at FROM latest_device_states WHERE received_at >= $1 ORDER BY received_at DESC",
+            cutoff_date
+        )
+        return [{"device_id": row['device_id'], "last_active": row['received_at'].isoformat()} for row in rows]
+    
+    return await safe_db_operation(query_operation)

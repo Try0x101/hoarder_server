@@ -1,11 +1,10 @@
 import asyncio
 import datetime
-from app.db import init_db
-from app.cache import init_redis_pool
-from app.realtime.websocket.cleanup import cleanup_stale_connections
+from database.connection import init_db
+from cache import init_redis_pool
 
 async def startup_handler():
-    print(f"[{datetime.datetime.now()}] Starting hoarder_server v3.3.0...")
+    print(f"[{datetime.datetime.now()}] Starting hoarder_api_server v2.0.0...")
     
     try:
         await init_db()
@@ -19,26 +18,8 @@ async def startup_handler():
     except Exception as e:
         print(f"[{datetime.datetime.now()}] Redis initialization failed: {e}")
     
-    print(f"[{datetime.datetime.now()}] Server ready")
+    print(f"[{datetime.datetime.now()}] API Server ready")
 
-async def shutdown_handler(sio, connection_manager):
-    print(f"[{datetime.datetime.now()}] Shutting down hoarder_server...")
-    
-    disconnect_tasks = []
-    for sid in list(connection_manager.connections.keys()):
-        disconnect_tasks.append(sio.disconnect(sid))
-        
-    if disconnect_tasks:
-        await asyncio.gather(*disconnect_tasks, return_exceptions=True)
-    
+async def shutdown_handler():
+    print(f"[{datetime.datetime.now()}] Shutting down hoarder_api_server...")
     print(f"[{datetime.datetime.now()}] Shutdown complete")
-
-async def periodic_maintenance_task(sio, connection_manager, shared_timezone_manager):
-    while True:
-        try:
-            await cleanup_stale_connections(connection_manager, sio)
-            await shared_timezone_manager.broadcast_timezone_updates(sio)
-            await asyncio.sleep(15)
-        except Exception as e:
-            print(f"[{datetime.datetime.now()}] Maintenance error: {e}")
-            await asyncio.sleep(60)

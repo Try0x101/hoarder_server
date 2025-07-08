@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
-from app.responses import PrettyJSONResponse
-from app.api.data.handlers import handle_latest_data, handle_device_data
+from responses import PrettyJSONResponse
+from api.data.handlers import handle_latest_data, handle_device_data
 
 router = APIRouter()
 

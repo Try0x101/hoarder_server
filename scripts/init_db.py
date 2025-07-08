@@ -2,31 +2,29 @@
 import asyncio
 import asyncpg
 import sys
+import datetime
 
 DB_CONFIG = {"user":"admin","password":"admin","database":"database","host":"localhost"}
 
 async def create_tables():
     conn = await asyncpg.connect(**DB_CONFIG)
     try:
-        print("Creating database schema...")
-        
+        print("Creating database schema for new architecture...")
+
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS device_data (
-                id SERIAL PRIMARY KEY,
-                device_id TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS ingested_data (
+                id BIGSERIAL PRIMARY KEY,
                 payload JSONB NOT NULL,
-                received_at TIMESTAMPTZ DEFAULT NOW()
-            )
+                received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                processed BOOLEAN NOT NULL DEFAULT FALSE,
+                ingest_endpoint TEXT NOT NULL
+            );
         """)
-        
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_device_data_device_id ON device_data(device_id)
-        """)
-        
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_device_data_received_at ON device_data(received_at DESC)
-        """)
-        
+        print("Created 'ingested_data' table.")
+
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_unprocessed_data ON ingested_data (received_at) WHERE processed = FALSE;")
+        print("Created index on 'ingested_data'.")
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS latest_device_states (
                 device_id TEXT PRIMARY KEY,
@@ -34,7 +32,8 @@ async def create_tables():
                 received_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
-        
+        print("Created 'latest_device_states' table.")
+
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS timestamped_data (
                 device_id TEXT NOT NULL,
@@ -46,7 +45,11 @@ async def create_tables():
                 batch_id TEXT
             ) PARTITION BY RANGE (data_timestamp)
         """)
-        
+        print("Created 'timestamped_data' partitioned table.")
+
+        await conn.execute("DROP TABLE IF EXISTS device_data;")
+        print("Dropped redundant 'device_data' table.")
+
         await conn.execute("""
             CREATE OR REPLACE FUNCTION jsonb_recursive_merge(a JSONB, b JSONB)
             RETURNS JSONB AS $$
@@ -57,34 +60,30 @@ async def create_tables():
             END;
             $$ LANGUAGE plpgsql;
         """)
+        print("Ensured 'jsonb_recursive_merge' function exists.")
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        partition_start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        partition_end_dt = (partition_start_dt + datetime.timedelta(days=32)).replace(day=1)
+        partition_name = f"timestamped_data_y{partition_start_dt.strftime('%Y')}m{partition_start_dt.strftime('%m')}"
         
-        current_month = "2025-07-01 00:00:00+00"
-        next_month = "2025-08-01 00:00:00+00"
-        partition_name = "timestamped_data_y2025m07"
-        
-        try:
+        exists = await conn.fetchval("SELECT EXISTS(SELECT 1 FROM pg_tables WHERE tablename = $1)", partition_name)
+        if not exists:
             await conn.execute(f"""
                 CREATE TABLE {partition_name} PARTITION OF timestamped_data
-                FOR VALUES FROM ('{current_month}') TO ('{next_month}')
+                FOR VALUES FROM ('{partition_start_dt.isoformat()}') TO ('{partition_end_dt.isoformat()}')
             """)
-            print(f"Created partition: {partition_name}")
-        except asyncpg.exceptions.DuplicateTableError:
-            print(f"Partition {partition_name} already exists")
-        
-        await conn.execute(f"""
-            CREATE INDEX IF NOT EXISTS {partition_name}_device_id_data_timestamp_idx 
-            ON {partition_name} (device_id, data_timestamp DESC)
-        """)
-        
-        await conn.execute(f"""
-            CREATE INDEX IF NOT EXISTS {partition_name}_data_timestamp_idx 
-            ON {partition_name} (data_timestamp DESC)
-        """)
-        
-        print("Database schema created successfully")
-        
+            print(f"Created initial partition: {partition_name}")
+            await conn.execute(f'CREATE INDEX ON {partition_name} (device_id, data_timestamp DESC);')
+            await conn.execute(f'CREATE INDEX ON {partition_name} (data_timestamp DESC);')
+            print(f"Created indexes on partition {partition_name}")
+        else:
+            print(f"Partition {partition_name} already exists.")
+
+        print("Database schema created successfully for the new architecture.")
+
     except Exception as e:
-        print(f"Error creating schema: {e}")
+        print(f"Error creating schema: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
         await conn.close()

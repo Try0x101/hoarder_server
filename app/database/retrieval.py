@@ -1,7 +1,6 @@
 import json
 import datetime
 from typing import Optional, Dict, Any, List
-
 from .connection import get_pool
 
 async def get_raw_latest_payload_for_device(device_id: str) -> Optional[Dict[str, Any]]:
