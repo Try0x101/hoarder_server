@@ -26,7 +26,7 @@ def safe_float(value):
 def normalize_bssid(bssid_value):
     if bssid_value is None: return None
     str_value = str(bssid_value).strip()
-    if str_value.lower() in ['', 'error', 'null', 'none', 'undefined', 'n/a']:
+    if str_value.lower() in ['', 'error', 'null', 'none', 'undefined', 'n/a', '0']:
         return None
     return str_value
 

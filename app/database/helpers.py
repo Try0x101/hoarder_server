@@ -22,7 +22,8 @@ def deep_merge(source: dict, destination: dict) -> dict:
     return result
 
 def sanitize_payload(data: any) -> any:
-    if isinstance(data, dict): return {k: sanitize_payload(v) for k, v in data.items()}
+    if isinstance(data, dict): 
+        return {k: sanitize_payload(v) for k, v in data.items() if sanitize_payload(v) is not None}
     if isinstance(data, list): return [sanitize_payload(v) for v in data]
     if isinstance(data, float) and (data != data or abs(data) == float('inf')): return None
     if isinstance(data, str):

@@ -32,6 +32,7 @@ def setup_api_endpoints(app, connection_manager: ConnectionManager):
             },
             "endpoints": {
                 "self": f"{base_url}/",
+                "dashboard": f"{base_url}/dashboard/",
                 "latest_data_all_devices": f"{base_url}/data/latest",
                 "device_history": f"{base_url}/data/history?device_id={{device_id}}",
                 "websocket": f"ws://{request.url.netloc}/socket.io/"
